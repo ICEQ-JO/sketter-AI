@@ -6,8 +6,9 @@ import { SceneStore } from "@/lib/canvas/sceneStore";
 import { buildCanvasSummary } from "@/lib/canvas/summary";
 import { executeToolCall } from "@/lib/tools/executor";
 import type { ToolName } from "@/lib/tools/schema";
-import { DEFAULT_MODEL } from "@/lib/openrouter/models";
-import SettingsBar from "./SettingsBar";
+import { getProvider, DEFAULT_PROVIDER_ID } from "@/lib/providers/registry";
+import EmptyState from "./EmptyState";
+import SettingsModal from "./SettingsModal";
 
 interface ChatMessage {
   id: string;
@@ -29,21 +30,29 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps) {
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("excalichat.apiKey") ?? "");
-  const [model, setModel] = useState(
-    () => localStorage.getItem("excalichat.model") ?? DEFAULT_MODEL,
+  const [providerId, setProviderId] = useState(
+    () => localStorage.getItem("sketter.providerId") ?? DEFAULT_PROVIDER_ID,
   );
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("sketter.apiKey") ?? "");
+  const [model, setModel] = useState(
+    () => localStorage.getItem("sketter.model") ?? getProvider(DEFAULT_PROVIDER_ID).defaultModel,
+  );
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    localStorage.setItem("excalichat.apiKey", apiKey);
+    localStorage.setItem("sketter.providerId", providerId);
+  }, [providerId]);
+
+  useEffect(() => {
+    localStorage.setItem("sketter.apiKey", apiKey);
   }, [apiKey]);
 
   useEffect(() => {
-    localStorage.setItem("excalichat.model", model);
+    localStorage.setItem("sketter.model", model);
   }, [model]);
 
   useEffect(() => {
@@ -68,18 +77,16 @@ export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps)
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!input.trim() || isStreaming) return;
+  async function sendMessage(userText: string) {
+    if (!userText.trim() || isStreaming) return;
     if (!excalidrawApi) return;
 
     if (!apiKey) {
-      addMessage("system-note", "Add an OpenRouter API key above before chatting.");
+      addMessage("system-note", "Add an API key in settings before chatting.");
+      setSettingsOpen(true);
       return;
     }
 
-    const userText = input.trim();
-    setInput("");
     addMessage("user", userText);
 
     const history = [...messages, { id: "tmp", role: "user" as const, content: userText }]
@@ -199,25 +206,71 @@ export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps)
     }
   }
 
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const text = input.trim();
+    setInput("");
+    void sendMessage(text);
+  }
+
+  const provider = getProvider(providerId);
+
+  const settingsModal = (
+    <SettingsModal
+      open={settingsOpen}
+      onClose={() => setSettingsOpen(false)}
+      providerId={providerId}
+      onProviderChange={(id) => {
+        setProviderId(id);
+        setModel(getProvider(id).defaultModel);
+      }}
+      apiKey={apiKey}
+      onApiKeyChange={setApiKey}
+      model={model}
+      onModelChange={setModel}
+    />
+  );
+
+  if (messages.length === 0) {
+    return (
+      <>
+        <EmptyState
+          onSubmit={(text) => void sendMessage(text)}
+          isStreaming={isStreaming}
+          onOpenSettings={() => setSettingsOpen(true)}
+          hasApiKey={!!apiKey}
+        />
+        {settingsModal}
+      </>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col">
-      <SettingsBar apiKey={apiKey} onApiKeyChange={setApiKey} model={model} onModelChange={setModel} />
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <span className="text-xs text-muted">
+          {provider.label} · {model}
+        </span>
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          className="text-xs text-muted hover:text-foreground"
+          aria-label="Open settings"
+        >
+          ⚙
+        </button>
+      </div>
 
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-3">
-        {messages.length === 0 && (
-          <p className="text-sm text-black/40 dark:text-white/40">
-            Try: &quot;draw a Kubernetes architecture with a load balancer, 3 pods, and a Redis cache&quot;
-          </p>
-        )}
         {messages.map((m) => (
           <div
             key={m.id}
             className={
               m.role === "user"
-                ? "ml-auto max-w-[85%] rounded-lg bg-blue-600 px-3 py-2 text-sm text-white"
+                ? "ml-auto max-w-[85%] rounded-lg bg-accent px-3 py-2 text-sm text-background"
                 : m.role === "system-note"
-                  ? "max-w-full rounded bg-amber-100 px-3 py-1.5 text-xs text-amber-900 dark:bg-amber-900/30 dark:text-amber-200"
-                  : "max-w-[85%] rounded-lg bg-black/5 px-3 py-2 text-sm text-black dark:bg-white/10 dark:text-white"
+                  ? "max-w-full rounded border border-accent-dim bg-accent/10 px-3 py-1.5 text-xs text-accent"
+                  : "max-w-[85%] rounded-lg border border-border bg-white/[0.03] px-3 py-2 text-sm text-foreground"
             }
           >
             {m.content || (m.role === "assistant" ? "…" : "")}
@@ -225,22 +278,24 @@ export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps)
         ))}
       </div>
 
-      <form onSubmit={handleSubmit} className="flex gap-2 border-t border-black/10 p-3 dark:border-white/10">
+      <form onSubmit={handleSubmit} className="flex gap-2 border-t border-border p-3">
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Describe or edit the diagram…"
           disabled={isStreaming}
-          className="flex-1 rounded border border-black/15 bg-transparent px-3 py-2 text-sm text-black outline-none disabled:opacity-50 dark:border-white/15 dark:text-white"
+          className="flex-1 rounded border border-border bg-transparent px-3 py-2 text-sm text-foreground outline-none placeholder:text-dim disabled:opacity-50"
         />
         <button
           type="submit"
           disabled={isStreaming || !input.trim()}
-          className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+          className="rounded bg-accent px-4 py-2 text-sm font-medium text-background disabled:opacity-40"
         >
           {isStreaming ? "Drawing…" : "Send"}
         </button>
       </form>
+
+      {settingsModal}
     </div>
   );
 }

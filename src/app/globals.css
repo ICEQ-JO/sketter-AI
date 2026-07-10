@@ -1,26 +1,117 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #08090b;
+  --foreground: #e8e6de;
+  --muted: #6b6f76;
+  --dim: #4a4d53;
+  --border: rgba(232, 230, 222, 0.1);
+  --accent: #ff8a3d;
+  --accent-dim: #ff8a3d99;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-muted: var(--muted);
+  --color-dim: var(--dim);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --font-mono: var(--font-jetbrains-mono);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
+}
+
+@keyframes blink-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes draw-in {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/*
+ * Component classes live in Tailwind's `components` layer so utility
+ * classes on the same element (e.g. `fixed`, `absolute`) always win
+ * regardless of source order — @layer ordering beats textual order.
+ */
+@layer components {
+  /* Subtle film-grain texture for atmosphere on dark surfaces. Only sets
+     position when the host isn't already positioned by a utility class. */
+  .grain {
+    position: relative;
+  }
+  .grain::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .doodle path {
+    stroke-dasharray: 340;
+    stroke-dashoffset: 340;
+    animation: draw-in 2.4s ease-out forwards;
+  }
+
+  /* Landing page link rows: soft radial glow + sliding arrow on hover. */
+  .sketter-link {
+    position: relative;
+    isolation: isolate;
+  }
+  .sketter-link::before {
+    content: "";
+    position: absolute;
+    inset: -1rem -1.5rem;
+    z-index: -1;
+    border-radius: 1rem;
+    background: radial-gradient(120px 80px at 0% 50%, var(--accent-dim), transparent 70%);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+  .sketter-link:hover::before {
+    opacity: 0.16;
+  }
+  .sketter-link .arrow {
+    display: inline-block;
+    opacity: 0;
+    transform: translateX(-6px);
+    transition:
+      opacity 0.25s ease,
+      transform 0.25s ease;
+  }
+  .sketter-link:hover .arrow {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  .sketter-link .label {
+    transition: color 0.25s ease;
+  }
 }
