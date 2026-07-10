@@ -1,95 +1,53 @@
-# CanvasAI
+# ExcaliChat
 
-A web-first AI canvas editor. The AI reasons in diagrams — boxes, arrows, alignments — and the engine turns those concepts into real Excalidraw drawings. Runs locally with WebLLM/Ollama, or via OpenRouter.
+Chat with any AI model to draw and iterate on [Excalidraw](https://excalidraw.com) diagrams — no login, no backend, bring your own [OpenRouter](https://openrouter.ai) API key.
 
-## Quick start
+## What this is
+
+A thin, well-designed product layer on top of things that already exist:
+
+- [`@excalidraw/excalidraw`](https://github.com/excalidraw/excalidraw) — the canvas
+- [`@excalidraw/mermaid-to-excalidraw`](https://github.com/excalidraw/mermaid-to-excalidraw) — Mermaid import
+- [OpenRouter](https://openrouter.ai) — one API, any model
+
+The model never emits raw Excalidraw JSON. It calls a small, fixed set of tools (`create_element`, `connect`, `update_element`, `move_relative`, `delete_element`, `group`, `align`, `import_mermaid`) defined in [`src/lib/tools/schema.ts`](./src/lib/tools/schema.ts). A client-side executor ([`src/lib/tools/executor.ts`](./src/lib/tools/executor.ts)) sanitizes and applies each call to the live canvas immediately, so drawing happens incrementally as the model streams — not as a single frozen dump.
+
+## Status
+
+MVP core loop (M0–M2 of the build plan): scaffold, single-shot chat → draw, and incremental/streaming tool-call execution with a sanitization layer. Canvas-state-aware multi-turn iteration, the Mermaid import/export UI, and export buttons are not wired up yet.
+
+## Getting started
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the URL Vite prints (usually `http://localhost:5173`).
+Open [http://localhost:3000](http://localhost:3000), paste an [OpenRouter API key](https://openrouter.ai/keys), pick a model, and start describing a diagram.
 
-## How to use
+## Privacy
 
-1. Select a provider:
-   - **WebLLM** runs a small LLM entirely in your browser (requires WebGPU).
-   - **Ollama** connects to a local Ollama server at `http://localhost:11434`.
-   - **OpenRouter** connects to remote models via your OpenRouter API key.
-2. For OpenRouter, paste your API key in the input that appears. It is stored in `localStorage` only.
-3. Click **Init** / **Connect**.
-3. Type a request like:
-   - "Create a microservice architecture"
-   - "Add a load balancer to the right of the API"
-   - "Connect Frontend to Backend"
-   - "Align all boxes to the top"
-4. The AI calls Canvas SDK tools; the canvas updates live.
+- Your API key is stored **only** in your browser's `localStorage`. It is sent per-request to `/api/chat`, a stateless streaming proxy that forwards it straight to OpenRouter and logs nothing — it is never persisted server-side.
+- No telemetry, no accounts, no stored diagrams.
 
 ## Architecture
 
 ```
-User prompt
-    ↓
-LLM (WebLLM / Ollama / OpenRouter)
-    ↓
-Tool calls (create_box, connect, align...)
-    ↓
-Canvas SDK
-    ↓
-Layout engine (relative placement, alignment, distribution)
-    ↓
-Excalidraw adapter
-    ↓
-@excalidraw/excalidraw renderer
+Browser (Next.js)
+  ChatPanel  <-->  ExcalidrawCanvas
+       |                 |
+       v                 v
+   Action Executor (client, src/lib/tools + src/lib/canvas)
+       |
+       v
+  /api/chat (stateless streaming proxy)
+       |
+       v
+  OpenRouter API
 ```
 
-## Project structure
+See `src/lib/canvas/summary.ts` for the compact scene summary sent back to the model each turn instead of full Excalidraw JSON — this is what keeps small/cheap models reliable.
 
-```
-src/
-  canvas/        # Canvas SDK: elements, operations, state
-  layout/        # Constraint-based placement engine
-  adapters/      # Format adapters (Excalidraw first)
-  ai/            # LLM providers, tools, router, context
-  components/    # UI components
-  App.tsx        # Main application
-```
+## License
 
-## Local providers
-
-### WebLLM
-
-The default model is `Phi-3-mini-4k-instruct-q4f16_1-MLC`. It downloads automatically on first use. Requires a browser with WebGPU support (Chrome 113+ on desktop usually works).
-
-### Ollama
-
-Make sure Ollama is running and CORS is enabled:
-
-```bash
-OLLAMA_ORIGINS=* ollama serve
-```
-
-Make sure you have a model pulled, e.g.:
-
-```bash
-ollama pull llama3.1
-```
-
-### OpenRouter
-
-Select **OpenRouter** in the provider dropdown and paste your API key. The key is saved in the browser's `localStorage`. The default model is `openai/gpt-4o-mini`; you can change it in `src/ai/providers/openai-compatible.ts`.
-
-To use a different OpenRouter model, replace the model string with any model ID from [openrouter.ai/docs#models](https://openrouter.ai/docs#models), e.g. `anthropic/claude-3.5-sonnet` or `deepseek/deepseek-chat`.
-
-## Scripts
-
-- `npm run dev` — start development server
-- `npm run build` — production build
-- `npm run preview` — preview production build
-- `npm run lint` — TypeScript check
-
-## Notes
-
-- This is an MVP. The SDK, adapter, layout engine, and AI router are functional but minimal.
-- WebLLM performance depends heavily on your GPU. For faster inference, use Ollama.
+MIT
