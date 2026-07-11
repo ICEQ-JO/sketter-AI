@@ -1,5 +1,6 @@
 import { TOOL_SCHEMA } from "@/lib/tools/schema";
 import type { CanvasSummary } from "@/lib/canvas/summary";
+import type { ChatMode } from "@/lib/chat/mode";
 
 export const runtime = "edge";
 
@@ -8,9 +9,26 @@ interface ChatRequestBody {
   model: string;
   messages: { role: "user" | "assistant"; content: string }[];
   canvasSummary: CanvasSummary;
+  mode: ChatMode;
 }
 
-function systemPrompt(canvasSummary: CanvasSummary): string {
+function systemPrompt(canvasSummary: CanvasSummary, mode: ChatMode): string {
+  const shared = [
+    "Current canvas state (compact summary, not full Excalidraw JSON):",
+    JSON.stringify(canvasSummary),
+  ];
+
+  if (mode === "plan") {
+    return [
+      "You are a diagramming assistant in PLANNING mode.",
+      "Do not call any tools — you have none available right now.",
+      "Describe in prose what you would draw: the shapes, their labels, the connections between them, and your layout reasoning.",
+      "Structure your proposal as a short bulleted list of elements and connections so it's easy for the user to review.",
+      "If the user approves or asks you to proceed, they will switch you to build mode themselves — do not tell them how to do that, just wait for them to continue the conversation.",
+      ...shared,
+    ].join("\n");
+  }
+
   return [
     "You are a diagramming assistant that draws and edits an Excalidraw canvas by calling tools.",
     "You never emit raw Excalidraw JSON — only call the provided tools.",
@@ -18,14 +36,14 @@ function systemPrompt(canvasSummary: CanvasSummary): string {
     "Prefer move_relative over update_element with raw coordinates when the user describes a relationship (e.g. 'above', 'next to').",
     "Element ids must be short, human-readable, and unique (e.g. 'load_balancer', 'redis_cache').",
     "Only reference element ids that already exist on the canvas (see current state below) or that you are creating in this same turn.",
-    "Current canvas state (compact summary, not full Excalidraw JSON):",
-    JSON.stringify(canvasSummary),
+    ...shared,
   ].join("\n");
 }
 
 export async function POST(req: Request) {
   const body = (await req.json()) as ChatRequestBody;
-  const { apiKey, model, messages, canvasSummary } = body;
+  const { apiKey, model, messages, canvasSummary, mode } = body;
+  const effectiveMode: ChatMode = mode === "plan" ? "plan" : "build";
 
   if (!apiKey) {
     return new Response(JSON.stringify({ error: "Missing API key" }), { status: 401 });
@@ -45,9 +63,11 @@ export async function POST(req: Request) {
     body: JSON.stringify({
       model,
       stream: true,
-      tools: TOOL_SCHEMA,
-      tool_choice: "auto",
-      messages: [{ role: "system", content: systemPrompt(canvasSummary) }, ...messages],
+      ...(effectiveMode === "build" ? { tools: TOOL_SCHEMA, tool_choice: "auto" } : {}),
+      messages: [
+        { role: "system", content: systemPrompt(canvasSummary, effectiveMode) },
+        ...messages,
+      ],
     }),
   });
 

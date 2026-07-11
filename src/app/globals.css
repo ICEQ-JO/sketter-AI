@@ -1,13 +1,32 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
+  --accent: #ff8a3d;
+  --accent-dim: #ff8a3d99;
+}
+
+.dark {
   --background: #08090b;
   --foreground: #e8e6de;
   --muted: #6b6f76;
   --dim: #4a4d53;
   --border: rgba(232, 230, 222, 0.1);
-  --accent: #ff8a3d;
-  --accent-dim: #ff8a3d99;
+  --surface: rgba(255, 255, 255, 0.03);
+  --surface-strong: rgba(255, 255, 255, 0.06);
+  --scrim: rgba(0, 0, 0, 0.6);
+}
+
+.light {
+  --background: #f5f2ea;
+  --foreground: #1c1a16;
+  --muted: #7a7466;
+  --dim: #a39c8c;
+  --border: rgba(28, 26, 22, 0.12);
+  --surface: rgba(0, 0, 0, 0.03);
+  --surface-strong: rgba(0, 0, 0, 0.06);
+  --scrim: rgba(28, 26, 22, 0.4);
 }
 
 @theme inline {
@@ -17,6 +36,10 @@
   --color-dim: var(--dim);
   --color-border: var(--border);
   --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-surface: var(--surface);
+  --color-surface-strong: var(--surface-strong);
+  --color-scrim: var(--scrim);
   --font-mono: var(--font-jetbrains-mono);
 }
 
@@ -54,6 +77,36 @@ body {
   }
 }
 
+@keyframes drift-a {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(60px, -40px) scale(1.15);
+  }
+}
+
+@keyframes drift-b {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-50px, 50px) scale(1.1);
+  }
+}
+
+@keyframes drift-c {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(30px, 30px) scale(0.9);
+  }
+}
+
 /*
  * Component classes live in Tailwind's `components` layer so utility
  * classes on the same element (e.g. `fixed`, `absolute`) always win
@@ -74,11 +127,40 @@ body {
     mix-blend-mode: overlay;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
+  .light .grain::before {
+    opacity: 0.025;
+    mix-blend-mode: multiply;
+  }
 
   .doodle path {
     stroke-dasharray: 340;
     stroke-dashoffset: 340;
     animation: draw-in 2.4s ease-out forwards;
+  }
+
+  /* Slow drifting radial-gradient blobs for animated backgrounds. */
+  .ambient-blob {
+    position: absolute;
+    border-radius: 9999px;
+    filter: blur(10px);
+    pointer-events: none;
+    will-change: transform;
+  }
+  .ambient-blob-a {
+    animation: drift-a 24s ease-in-out infinite;
+  }
+  .ambient-blob-b {
+    animation: drift-b 28s ease-in-out infinite;
+  }
+  .ambient-blob-c {
+    animation: drift-c 20s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ambient-blob-a,
+    .ambient-blob-b,
+    .ambient-blob-c {
+      animation: none;
+    }
   }
 
   /* Landing page link rows: soft radial glow + sliding arrow on hover. */

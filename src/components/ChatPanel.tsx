@@ -7,14 +7,13 @@ import { buildCanvasSummary } from "@/lib/canvas/summary";
 import { executeToolCall } from "@/lib/tools/executor";
 import type { ToolName } from "@/lib/tools/schema";
 import { getProvider, DEFAULT_PROVIDER_ID } from "@/lib/providers/registry";
+import { DEFAULT_MODE, MODE_STORAGE_KEY, type ChatMode } from "@/lib/chat/mode";
+import { pendingDrawingNameKey } from "@/lib/storage/drawings";
+import type { ChatMessage } from "@/components/chat/types";
+import MessageBubble from "@/components/chat/MessageBubble";
+import ChatInput from "@/components/chat/ChatInput";
 import EmptyState from "./EmptyState";
 import SettingsModal from "./SettingsModal";
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant" | "system-note";
-  content: string;
-}
 
 interface StreamingToolCall {
   index: number;
@@ -27,15 +26,25 @@ interface StreamingToolCall {
 interface ChatPanelProps {
   excalidrawApi: ExcalidrawImperativeAPI | null;
   sceneStore: SceneStore;
+  currentDrawingId: string;
+  saveStatus: "idle" | "saving" | "saved";
 }
 
-export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps) {
+export default function ChatPanel({
+  excalidrawApi,
+  sceneStore,
+  currentDrawingId,
+  saveStatus,
+}: ChatPanelProps) {
   const [providerId, setProviderId] = useState(
     () => localStorage.getItem("sketter.providerId") ?? DEFAULT_PROVIDER_ID,
   );
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("sketter.apiKey") ?? "");
   const [model, setModel] = useState(
     () => localStorage.getItem("sketter.model") ?? getProvider(DEFAULT_PROVIDER_ID).defaultModel,
+  );
+  const [mode, setMode] = useState<ChatMode>(
+    () => (localStorage.getItem(MODE_STORAGE_KEY) as ChatMode) ?? DEFAULT_MODE,
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -56,11 +65,17 @@ export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps)
   }, [model]);
 
   useEffect(() => {
+    localStorage.setItem(MODE_STORAGE_KEY, mode);
+  }, [mode]);
+
+  useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages]);
 
   function addMessage(role: ChatMessage["role"], content: string) {
-    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role, content }]);
+    const id = crypto.randomUUID();
+    setMessages((prev) => [...prev, { id, role, content }]);
+    return id;
   }
 
   async function runToolCall(api: ExcalidrawImperativeAPI, tc: StreamingToolCall) {
@@ -71,8 +86,13 @@ export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps)
       addMessage("system-note", `Model produced malformed arguments for ${tc.name}, skipped.`);
       return;
     }
+    const activityId = addMessage(
+      "tool-activity",
+      `${tc.name}(${Object.entries(args).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(", ")})`,
+    );
     const result = await executeToolCall(api, sceneStore, tc.name as ToolName, args);
     if (!result.ok) {
+      setMessages((prev) => prev.filter((m) => m.id !== activityId));
       addMessage("system-note", `Skipped ${tc.name}: ${result.reason}`);
     }
   }
@@ -87,10 +107,14 @@ export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps)
       return;
     }
 
+    const isFirstMessage = messages.length === 0;
     addMessage("user", userText);
+    if (isFirstMessage) {
+      localStorage.setItem(pendingDrawingNameKey(currentDrawingId), userText.slice(0, 40));
+    }
 
     const history = [...messages, { id: "tmp", role: "user" as const, content: userText }]
-      .filter((m) => m.role !== "system-note")
+      .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
     const canvasSummary = buildCanvasSummary(excalidrawApi.getSceneElements());
@@ -104,7 +128,7 @@ export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps)
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey, model, messages: history, canvasSummary }),
+        body: JSON.stringify({ apiKey, model, messages: history, canvasSummary, mode }),
       });
 
       if (!res.ok || !res.body) {
@@ -163,36 +187,40 @@ export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps)
             });
           }
 
-          for (const tcDelta of delta?.tool_calls ?? []) {
-            if (tcDelta.index !== lastIndex && toolCalls.has(lastIndex)) {
-              const prevCall = toolCalls.get(lastIndex)!;
-              if (!prevCall.executed) {
-                prevCall.executed = true;
-                await runToolCall(excalidrawApi, prevCall);
+          if (mode === "build") {
+            for (const tcDelta of delta?.tool_calls ?? []) {
+              if (tcDelta.index !== lastIndex && toolCalls.has(lastIndex)) {
+                const prevCall = toolCalls.get(lastIndex)!;
+                if (!prevCall.executed) {
+                  prevCall.executed = true;
+                  await runToolCall(excalidrawApi, prevCall);
+                }
               }
-            }
-            lastIndex = tcDelta.index;
+              lastIndex = tcDelta.index;
 
-            const existing = toolCalls.get(tcDelta.index);
-            if (existing) {
-              existing.arguments += tcDelta.function?.arguments ?? "";
-            } else {
-              toolCalls.set(tcDelta.index, {
-                index: tcDelta.index,
-                id: tcDelta.id ?? "",
-                name: tcDelta.function?.name ?? "",
-                arguments: tcDelta.function?.arguments ?? "",
-                executed: false,
-              });
+              const existing = toolCalls.get(tcDelta.index);
+              if (existing) {
+                existing.arguments += tcDelta.function?.arguments ?? "";
+              } else {
+                toolCalls.set(tcDelta.index, {
+                  index: tcDelta.index,
+                  id: tcDelta.id ?? "",
+                  name: tcDelta.function?.name ?? "",
+                  arguments: tcDelta.function?.arguments ?? "",
+                  executed: false,
+                });
+              }
             }
           }
         }
       }
 
-      for (const tc of toolCalls.values()) {
-        if (!tc.executed) {
-          tc.executed = true;
-          await runToolCall(excalidrawApi, tc);
+      if (mode === "build") {
+        for (const tc of toolCalls.values()) {
+          if (!tc.executed) {
+            tc.executed = true;
+            await runToolCall(excalidrawApi, tc);
+          }
         }
       }
 
@@ -204,13 +232,6 @@ export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps)
     } finally {
       setIsStreaming(false);
     }
-  }
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const text = input.trim();
-    setInput("");
-    void sendMessage(text);
   }
 
   const provider = getProvider(providerId);
@@ -239,6 +260,8 @@ export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps)
           isStreaming={isStreaming}
           onOpenSettings={() => setSettingsOpen(true)}
           hasApiKey={!!apiKey}
+          mode={mode}
+          onModeChange={setMode}
         />
         {settingsModal}
       </>
@@ -248,52 +271,44 @@ export default function ChatPanel({ excalidrawApi, sceneStore }: ChatPanelProps)
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-xs text-muted">
-          {provider.label} · {model}
+        <span className="truncate text-xs text-muted">
+          {provider.label} · {model} · <span className="capitalize text-foreground">{mode}</span>
         </span>
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          className="text-xs text-muted hover:text-foreground"
-          aria-label="Open settings"
-        >
-          ⚙
-        </button>
+        <div className="flex shrink-0 items-center gap-3">
+          <span className="text-[10px] text-dim">
+            {saveStatus === "saving" ? "saving…" : saveStatus === "saved" ? "saved" : ""}
+          </span>
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            className="text-xs text-muted hover:text-foreground"
+            aria-label="Open settings"
+          >
+            ⚙
+          </button>
+        </div>
       </div>
 
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-3">
+      <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto p-3">
         {messages.map((m) => (
-          <div
-            key={m.id}
-            className={
-              m.role === "user"
-                ? "ml-auto max-w-[85%] rounded-lg bg-accent px-3 py-2 text-sm text-background"
-                : m.role === "system-note"
-                  ? "max-w-full rounded border border-accent-dim bg-accent/10 px-3 py-1.5 text-xs text-accent"
-                  : "max-w-[85%] rounded-lg border border-border bg-white/[0.03] px-3 py-2 text-sm text-foreground"
-            }
-          >
-            {m.content || (m.role === "assistant" ? "…" : "")}
-          </div>
+          <MessageBubble key={m.id} message={m} />
         ))}
       </div>
 
-      <form onSubmit={handleSubmit} className="flex gap-2 border-t border-border p-3">
-        <input
+      <div className="border-t border-border p-3">
+        <ChatInput
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Describe or edit the diagram…"
-          disabled={isStreaming}
-          className="flex-1 rounded border border-border bg-transparent px-3 py-2 text-sm text-foreground outline-none placeholder:text-dim disabled:opacity-50"
+          onChange={setInput}
+          onSubmit={(text) => {
+            setInput("");
+            void sendMessage(text);
+          }}
+          isStreaming={isStreaming}
+          mode={mode}
+          onModeChange={setMode}
+          rows={1}
         />
-        <button
-          type="submit"
-          disabled={isStreaming || !input.trim()}
-          className="rounded bg-accent px-4 py-2 text-sm font-medium text-background disabled:opacity-40"
-        >
-          {isStreaming ? "Drawing…" : "Send"}
-        </button>
-      </form>
+      </div>
 
       {settingsModal}
     </div>

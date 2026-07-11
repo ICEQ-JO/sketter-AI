@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { PROVIDERS, getProvider } from "@/lib/providers/registry";
+import AppearanceSection from "./settings/AppearanceSection";
+import ProviderSection from "./settings/ProviderSection";
+import DataSection from "./settings/DataSection";
 
 interface SettingsModalProps {
   open: boolean;
@@ -14,6 +16,14 @@ interface SettingsModalProps {
   onModelChange: (model: string) => void;
 }
 
+const TABS = [
+  { id: "appearance", label: "appearance" },
+  { id: "provider", label: "ai provider" },
+  { id: "data", label: "data" },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
+
 export default function SettingsModal({
   open,
   onClose,
@@ -24,104 +34,66 @@ export default function SettingsModal({
   model,
   onModelChange,
 }: SettingsModalProps) {
-  const [showKey, setShowKey] = useState(false);
-  const availableProviders = PROVIDERS.filter((p) => p.status === "available");
-  const provider = getProvider(providerId);
-  const isCustomModel = !provider.models.some((m) => m.id === model);
+  const [activeTab, setActiveTab] = useState<TabId>("provider");
 
   if (!open) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="grain w-full max-w-md rounded-xl border border-border bg-background p-5 shadow-2xl"
+        className="grain flex h-[520px] w-full max-w-2xl overflow-hidden rounded-xl border border-border bg-background shadow-2xl"
         style={{ animation: "fade-up 0.2s ease-out both" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-foreground">settings</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-dim hover:text-foreground"
-            aria-label="Close settings"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="mt-5 flex flex-col gap-4">
-          <label className="flex flex-col gap-1 text-xs text-muted">
-            provider
-            <select
-              value={providerId}
-              onChange={(e) => onProviderChange(e.target.value)}
-              className="rounded border border-border bg-transparent px-2 py-1.5 text-sm text-foreground outline-none"
+        <nav className="flex w-40 shrink-0 flex-col gap-1 border-r border-border p-3">
+          <span className="mb-2 px-2 text-sm font-semibold text-foreground">settings</span>
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={
+                "rounded px-2 py-1.5 text-left text-xs transition-colors " +
+                (activeTab === tab.id
+                  ? "border-l-2 border-accent bg-surface text-accent"
+                  : "border-l-2 border-transparent text-muted hover:text-foreground")
+              }
             >
-              {availableProviders.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-            <span className="text-[10px] text-dim">
-              more providers (OpenAI, Anthropic direct) are on the roadmap.
-            </span>
-          </label>
+              {tab.label}
+            </button>
+          ))}
+        </nav>
 
-          <label className="flex flex-col gap-1 text-xs text-muted">
-            {provider.label} API key
-            <div className="flex gap-1">
-              <input
-                type={showKey ? "text" : "password"}
-                value={apiKey}
-                onChange={(e) => onApiKeyChange(e.target.value)}
-                placeholder={provider.apiKeyPlaceholder}
-                className="w-full rounded border border-border bg-transparent px-2 py-1.5 text-sm text-foreground outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => setShowKey((s) => !s)}
-                className="shrink-0 rounded border border-border px-2 text-xs text-muted hover:text-foreground"
-              >
-                {showKey ? "hide" : "show"}
-              </button>
-            </div>
-            <span className="text-[10px] text-dim">
-              stored only in this browser&apos;s localStorage, sent only to {provider.label}.
-            </span>
-          </label>
-
-          <label className="flex flex-col gap-1 text-xs text-muted">
-            model
-            <select
-              value={isCustomModel ? "__custom__" : model}
-              onChange={(e) => {
-                if (e.target.value === "__custom__") return;
-                onModelChange(e.target.value);
-              }}
-              className="rounded border border-border bg-transparent px-2 py-1.5 text-sm text-foreground outline-none"
+        <div className="flex flex-1 flex-col">
+          <div className="flex items-center justify-end border-b border-border px-5 py-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-dim hover:text-foreground"
+              aria-label="Close settings"
             >
-              {provider.models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label} ({m.tier})
-                </option>
-              ))}
-              <option value="__custom__">custom model slug…</option>
-            </select>
-            {isCustomModel && (
-              <input
-                type="text"
-                value={model}
-                onChange={(e) => onModelChange(e.target.value)}
-                placeholder="vendor/model-slug"
-                className="mt-1 rounded border border-border bg-transparent px-2 py-1.5 text-sm text-foreground outline-none"
+              ✕
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-5">
+            {activeTab === "appearance" && <AppearanceSection />}
+            {activeTab === "provider" && (
+              <ProviderSection
+                providerId={providerId}
+                onProviderChange={onProviderChange}
+                apiKey={apiKey}
+                onApiKeyChange={onApiKeyChange}
+                model={model}
+                onModelChange={onModelChange}
               />
             )}
-          </label>
+            {activeTab === "data" && (
+              <DataSection apiKey={apiKey} onApiKeyChange={onApiKeyChange} />
+            )}
+          </div>
         </div>
       </div>
     </div>
