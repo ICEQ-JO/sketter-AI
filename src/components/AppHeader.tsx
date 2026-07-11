@@ -9,12 +9,32 @@ function ThemeQuickToggle() {
     <button
       type="button"
       onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-      className="rounded border border-border px-2 py-1 text-xs text-muted hover:text-foreground"
+      className="rounded border border-border px-3 py-2 text-sm text-muted hover:text-foreground"
       aria-label="Toggle theme"
       title="Toggle theme"
     >
       {theme === "dark" ? "☀" : "◐"}
     </button>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <line x1="4" y1="8" x2="20" y2="8" />
+      <line x1="4" y1="16" x2="20" y2="16" />
+    </svg>
   );
 }
 
@@ -24,6 +44,7 @@ interface AppHeaderProps {
   showCanvas: boolean;
   onToggleChat: () => void;
   onToggleCanvas: () => void;
+  onToggleSidebar: () => void;
 }
 
 export default function AppHeader({
@@ -32,12 +53,29 @@ export default function AppHeader({
   showCanvas,
   onToggleChat,
   onToggleCanvas,
+  onToggleSidebar,
 }: AppHeaderProps) {
   return (
-    <header className="flex h-10 shrink-0 items-center justify-between border-b border-border bg-background px-3">
-      <Link href="/" className="text-xs text-muted hover:text-foreground">
-        ← sketter
-      </Link>
+    <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-background px-3">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onToggleSidebar}
+          className="rounded border border-border px-3 py-2 text-sm text-muted hover:text-foreground"
+          aria-label="Toggle chat sidebar"
+          title="Chats"
+        >
+          <MenuIcon />
+        </button>
+
+        <Link
+          href="/"
+          className="flex items-center gap-1.5 rounded px-2 py-1.5 text-sm font-medium text-muted transition-colors hover:text-foreground"
+        >
+          <span aria-hidden>←</span>
+          <span>sketter</span>
+        </Link>
+      </div>
 
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1 rounded-full border border-border p-0.5 text-[11px]">
@@ -68,7 +106,7 @@ export default function AppHeader({
         <button
           type="button"
           onClick={onOpenSettings}
-          className="rounded border border-border px-2 py-1 text-xs text-muted hover:text-foreground"
+          className="rounded border border-border px-3 py-2 text-sm text-muted hover:text-foreground"
           aria-label="Open settings"
           title="Settings"
         >

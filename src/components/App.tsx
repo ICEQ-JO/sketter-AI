@@ -30,6 +30,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showChat, setShowChat] = useState(true);
   const [showCanvas, setShowCanvas] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chatWidthPct, setChatWidthPct] = useState(() => {
     const stored = Number(localStorage.getItem(CHAT_WIDTH_STORAGE_KEY));
     return stored >= MIN_PANEL_PCT && stored <= MAX_PANEL_PCT ? stored : DEFAULT_CHAT_WIDTH_PCT;
@@ -142,6 +143,7 @@ export default function App() {
         showCanvas={showCanvas}
         onToggleChat={toggleChat}
         onToggleCanvas={toggleCanvas}
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
       />
       <div ref={containerRef} className="relative flex min-h-0 flex-1 overflow-hidden">
         <aside
