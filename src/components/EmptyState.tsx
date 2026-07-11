@@ -43,7 +43,7 @@ export default function EmptyState({
 
       <div className="relative z-10 flex w-full max-w-xl flex-col items-center">
         <pre
-          className="select-none whitespace-pre text-center text-[5px] leading-[6px] text-accent sm:text-[8px] sm:leading-[9px]"
+          className="ascii-banner select-none whitespace-pre text-center text-[6px] leading-[7px] text-foreground sm:text-[10px] sm:leading-[11px]"
           style={{ animation: "fade-up 0.6s ease-out both" }}
           aria-label="Sketter"
         >

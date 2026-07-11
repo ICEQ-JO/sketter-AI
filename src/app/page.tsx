@@ -78,6 +78,88 @@ function GithubMark() {
   );
 }
 
+interface Doodle {
+  className: string;
+  width: number;
+  height: number;
+  viewBox: string;
+  paths: string[];
+  opacity: number;
+  delay: number;
+  closed?: boolean;
+}
+
+// Faint hand-drawn doodles nodding to the Excalidraw canvas underneath it
+// all, scattered across the whole background rather than pinned to corners.
+const DOODLES: Doodle[] = [
+  {
+    className: "-left-10 top-20",
+    width: 260,
+    height: 180,
+    viewBox: "0 0 260 180",
+    opacity: 0.08,
+    delay: 0,
+    paths: ["M10 140 C 60 40, 140 20, 180 70 S 250 130, 230 60"],
+  },
+  {
+    className: "bottom-10 right-0",
+    width: 220,
+    height: 220,
+    viewBox: "0 0 220 220",
+    opacity: 0.07,
+    delay: 0.3,
+    closed: true,
+    paths: ["M20 20 L 180 40 L 160 190 L 30 170 Z"],
+  },
+  {
+    className: "right-16 top-10",
+    width: 170,
+    height: 170,
+    viewBox: "0 0 170 170",
+    opacity: 0.06,
+    delay: 0.6,
+    paths: [
+      "M25 105 C 22 55, 75 20, 120 40 C 155 56, 150 105, 110 128 C 75 148, 32 135, 25 105",
+    ],
+  },
+  {
+    className: "-left-16 top-1/2",
+    width: 220,
+    height: 140,
+    viewBox: "0 0 220 140",
+    opacity: 0.06,
+    delay: 0.9,
+    paths: ["M0 70 C 45 15, 85 125, 130 55 S 195 15, 220 65"],
+  },
+  {
+    className: "bottom-24 left-[8%]",
+    width: 150,
+    height: 110,
+    viewBox: "0 0 150 110",
+    opacity: 0.07,
+    delay: 1.2,
+    paths: ["M10 10 L 65 95 L 115 20 L 140 85"],
+  },
+  {
+    className: "bottom-1/3 right-[22%]",
+    width: 100,
+    height: 100,
+    viewBox: "0 0 100 100",
+    opacity: 0.06,
+    delay: 1.5,
+    paths: ["M50 12 A 36 38 0 1 1 49 12"],
+  },
+  {
+    className: "left-1/3 top-8",
+    width: 90,
+    height: 60,
+    viewBox: "0 0 90 60",
+    opacity: 0.05,
+    delay: 1.8,
+    paths: ["M5 30 C 20 5, 40 5, 45 30 C 50 5, 70 5, 85 30"],
+  },
+];
+
 export default function LandingPage() {
   return (
     <div className="grain relative flex min-h-screen w-full flex-col overflow-hidden bg-background text-foreground">
@@ -91,41 +173,35 @@ export default function LandingPage() {
         }}
       />
 
-      {/* faint hand-drawn doodles, nodding to the Excalidraw canvas underneath it all */}
-      <svg
-        className="doodle pointer-events-none absolute -left-10 top-20 opacity-[0.08]"
-        width="260"
-        height="180"
-        viewBox="0 0 260 180"
-        fill="none"
-      >
-        <path
-          d="M10 140 C 60 40, 140 20, 180 70 S 250 130, 230 60"
-          stroke="var(--foreground)"
-          strokeWidth="2"
-          strokeLinecap="round"
-        />
-      </svg>
-      <svg
-        className="doodle pointer-events-none absolute bottom-10 right-0 opacity-[0.07]"
-        width="220"
-        height="220"
-        viewBox="0 0 220 220"
-        fill="none"
-      >
-        <path
-          d="M20 20 L 180 40 L 160 190 L 30 170 Z"
-          stroke="var(--foreground)"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+      {DOODLES.map((doodle, i) => (
+        <svg
+          key={i}
+          aria-hidden
+          className={`doodle pointer-events-none absolute ${doodle.className}`}
+          width={doodle.width}
+          height={doodle.height}
+          viewBox={doodle.viewBox}
+          fill="none"
+          style={{ opacity: doodle.opacity }}
+        >
+          {doodle.paths.map((d, j) => (
+            <path
+              key={j}
+              d={d}
+              stroke="var(--foreground)"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin={doodle.closed ? "round" : undefined}
+              style={{ animationDelay: `${doodle.delay}s` }}
+            />
+          ))}
+        </svg>
+      ))}
 
       <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-8 sm:px-20">
         <div style={{ animation: "fade-up 0.6s ease-out both" }}>
           <pre
-            className="select-none whitespace-pre text-[5px] leading-[6px] text-accent sm:text-[8px] sm:leading-[9px]"
+            className="ascii-banner select-none whitespace-pre text-[6px] leading-[7px] text-foreground sm:text-[10px] sm:leading-[11px]"
             aria-label="Sketter"
           >
             {SKETTER_BANNER}

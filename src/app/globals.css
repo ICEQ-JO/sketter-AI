@@ -113,6 +113,21 @@ body {
  * regardless of source order — @layer ordering beats textual order.
  */
 @layer components {
+  /* JetBrains Mono doesn't carry a true monospace glyph for U+2588 (FULL
+     BLOCK), so the browser silently falls back to a different font for just
+     that character — every "█" ends up a slightly different width than the
+     surrounding spaces, staggering the whole banner. A plain system
+     monospace stack has consistent block-glyph metrics. */
+  .ascii-banner {
+    font-family:
+      ui-monospace,
+      "SF Mono",
+      Menlo,
+      Consolas,
+      "DejaVu Sans Mono",
+      monospace;
+  }
+
   /* Subtle film-grain texture for atmosphere on dark surfaces. Only sets
      position when the host isn't already positioned by a utility class. */
   .grain {
