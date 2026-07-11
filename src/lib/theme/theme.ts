@@ -3,9 +3,9 @@ export type Theme = "light" | "dark";
 export const THEME_STORAGE_KEY = "sketter.theme";
 export const THEME_CHANGE_EVENT = "sketter:theme-change";
 
-export function getSystemTheme(): Theme {
-  if (typeof window === "undefined") return "dark";
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+/** Sketter defaults to dark mode regardless of OS preference until the user picks a theme. */
+export function getDefaultTheme(): Theme {
+  return "dark";
 }
 
 export function getStoredTheme(): Theme | null {

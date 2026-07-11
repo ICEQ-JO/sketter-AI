@@ -18,9 +18,7 @@ const THEME_INIT_SCRIPT = `
 (function () {
   try {
     var stored = localStorage.getItem("sketter.theme");
-    var theme = stored === "light" || stored === "dark"
-      ? stored
-      : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    var theme = stored === "light" || stored === "dark" ? stored : "dark";
     document.documentElement.classList.add(theme);
   } catch (e) {
     document.documentElement.classList.add("dark");
