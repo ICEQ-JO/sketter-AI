@@ -47,11 +47,11 @@ export default function ChatSidebar({
           <p className="px-2 text-xs text-muted">no saved chats yet.</p>
         ) : (
           <div className="space-y-1">
-            {drawings.map((d) => {
+            {drawings.map((d, i) => {
               const isActive = d.id === currentDrawingId;
               return (
                 <button
-                  key={d.id}
+                  key={d.id || `drawing-${i}`}
                   type="button"
                   onClick={() => onLoadDrawing(d.id)}
                   title={d.name}

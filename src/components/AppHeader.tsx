@@ -1,22 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useTheme } from "@/lib/theme/useTheme";
-
-function ThemeQuickToggle() {
-  const [theme, setTheme] = useTheme();
-  return (
-    <button
-      type="button"
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-      className="rounded border border-border px-3.5 py-2.5 text-base text-muted hover:text-foreground"
-      aria-label="Toggle theme"
-      title="Toggle theme"
-    >
-      {theme === "dark" ? "☀" : "◐"}
-    </button>
-  );
-}
+import ThemeQuickToggle from "@/components/ThemeQuickToggle";
 
 function MenuIcon() {
   return (

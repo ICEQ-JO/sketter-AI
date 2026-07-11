@@ -17,6 +17,12 @@ export interface SavedDrawing {
 
 const drawingsStore = createStore("sketter-drawings", "drawings");
 
+export function newDrawingId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `drawing-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 /** localStorage key used to hand a proposed name from the chat to the autosave writer. */
 export function pendingDrawingNameKey(drawingId: string): string {
   return `sketter.pendingName.${drawingId}`;
@@ -55,7 +61,10 @@ function pickAppState(appState: AppState): Partial<AppState> {
 
 export async function listDrawings(): Promise<SavedDrawing[]> {
   const all = await entries<string, SavedDrawing>(drawingsStore);
-  return all.map(([, value]) => value).sort((a, b) => b.updatedAt - a.updatedAt);
+  return all
+    .map(([, value]) => value)
+    .filter((d) => d && typeof d.id === "string" && d.id.length > 0)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function loadDrawing(id: string): Promise<SavedDrawing | undefined> {

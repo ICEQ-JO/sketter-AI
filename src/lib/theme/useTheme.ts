@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import {
   applyTheme,
+  getDefaultTheme,
   getStoredTheme,
-  getSystemTheme,
   setStoredTheme,
   THEME_CHANGE_EVENT,
   type Theme,
@@ -14,7 +14,7 @@ function getInitialTheme(): Theme {
   if (typeof document === "undefined") return "dark";
   if (document.documentElement.classList.contains("light")) return "light";
   if (document.documentElement.classList.contains("dark")) return "dark";
-  return getStoredTheme() ?? getSystemTheme();
+  return getStoredTheme() ?? getDefaultTheme();
 }
 
 export function useTheme(): [Theme, (theme: Theme) => void] {
