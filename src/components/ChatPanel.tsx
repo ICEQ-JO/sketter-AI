@@ -7,10 +7,11 @@ import { buildCanvasSummary } from "@/lib/canvas/summary";
 import { verifyAndFix } from "@/lib/canvas/verify";
 import { executeToolCall } from "@/lib/tools/executor";
 import type { ToolName } from "@/lib/tools/schema";
+import { sanitizePlanToolCall } from "@/lib/tools/sanitize";
 import { getProvider, DEFAULT_PROVIDER_ID } from "@/lib/providers/registry";
 import { DEFAULT_MODE, MODE_STORAGE_KEY, type ChatMode } from "@/lib/chat/mode";
 import { pendingDrawingNameKey } from "@/lib/storage/drawings";
-import type { ChatMessage } from "@/components/chat/types";
+import type { ChatMessage, PlanData } from "@/components/chat/types";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
 import EmptyState from "./EmptyState";
@@ -87,6 +88,28 @@ export default function ChatPanel({
     return id;
   }
 
+  /** Applies a single already-parsed build tool call — shared by streamed calls and the direct plan-approval path. */
+  async function runBuildTool(
+    api: ExcalidrawImperativeAPI,
+    name: string,
+    args: Record<string, unknown>,
+    createdThisTurn: Set<string>,
+  ) {
+    const activityId = addMessage(
+      "tool-activity",
+      `${name}(${Object.entries(args).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(", ")})`,
+    );
+    const result = await executeToolCall(api, sceneStore, name as ToolName, args);
+    if (!result.ok) {
+      setMessages((prev) => prev.filter((m) => m.id !== activityId));
+      addMessage("system-note", `Skipped ${name}: ${result.reason}`);
+      return;
+    }
+    if ((name === "add_node" || name === "add_freeform") && typeof args.id === "string") {
+      createdThisTurn.add(args.id);
+    }
+  }
+
   async function runBuildToolCall(
     api: ExcalidrawImperativeAPI,
     tc: StreamingToolCall,
@@ -99,19 +122,7 @@ export default function ChatPanel({
       addMessage("system-note", `Model produced malformed arguments for ${tc.name}, skipped.`);
       return;
     }
-    const activityId = addMessage(
-      "tool-activity",
-      `${tc.name}(${Object.entries(args).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(", ")})`,
-    );
-    const result = await executeToolCall(api, sceneStore, tc.name as ToolName, args);
-    if (!result.ok) {
-      setMessages((prev) => prev.filter((m) => m.id !== activityId));
-      addMessage("system-note", `Skipped ${tc.name}: ${result.reason}`);
-      return;
-    }
-    if ((tc.name === "add_node" || tc.name === "add_freeform") && typeof args.id === "string") {
-      createdThisTurn.add(args.id);
-    }
+    await runBuildTool(api, tc.name, args, createdThisTurn);
   }
 
   function runPlanToolCall(tc: StreamingToolCall) {
@@ -122,13 +133,51 @@ export default function ChatPanel({
       addMessage("system-note", `Model produced malformed arguments for ${tc.name}, skipped.`);
       return;
     }
-    if (tc.name === "ask_question") {
-      const { question, options } = args as { question: string; options?: string[] };
-      addMessage("question", question, { question: { options, answered: false } });
-    } else if (tc.name === "propose_plan") {
-      const { plan } = args as { plan: string };
-      addMessage("plan", plan, { plan: { approved: false } });
+    if (tc.name !== "ask_question" && tc.name !== "propose_plan") return;
+
+    const sanitized = sanitizePlanToolCall({ name: tc.name, arguments: args });
+    if (!sanitized.ok) {
+      addMessage("system-note", `Model produced an invalid ${tc.name} call: ${sanitized.reason}`);
+      return;
     }
+
+    if (sanitized.name === "ask_question") {
+      const { question, options } = sanitized.args as { question: string; options?: string[] };
+      addMessage("question", question, { question: { options, answered: false } });
+    } else {
+      const { summary, nodes, edges } = sanitized.args as PlanData;
+      addMessage("plan", summary ?? "", { plan: { approved: false, summary, nodes, edges } });
+    }
+  }
+
+  /** Builds an approved plan directly from its structure — no LLM round-trip to reinterpret prose. */
+  async function executePlanDirectly(api: ExcalidrawImperativeAPI, plan: PlanData) {
+    const createdThisTurn = new Set<string>();
+    for (const node of plan.nodes ?? []) {
+      await runBuildTool(
+        api,
+        "add_node",
+        { id: node.id, type: node.type, text: node.label, group: node.group },
+        createdThisTurn,
+      );
+    }
+    for (const edge of plan.edges ?? []) {
+      await runBuildTool(
+        api,
+        "connect",
+        { from: edge.from, to: edge.to, label: edge.label },
+        createdThisTurn,
+      );
+    }
+
+    const canvasSummary = buildCanvasSummary(api.getSceneElements());
+    sceneStore.runAutoLayout(api, canvasSummary);
+
+    const verifyResult = verifyAndFix(api, sceneStore, createdThisTurn);
+    if (verifyResult.fixedCount > 0) {
+      addMessage("tool-activity", `auto-adjusted ${verifyResult.fixedCount} geometry issue(s)`);
+    }
+    addMessage("system-note", "Plan built.");
   }
 
   function handleAnswerQuestion(id: string, answer: string) {
@@ -141,11 +190,13 @@ export default function ChatPanel({
   }
 
   function handleApprovePlan(id: string) {
+    const planMsg = messages.find((m) => m.id === id);
     setMessages((prev) =>
       prev.map((m) => (m.id === id ? { ...m, plan: { ...m.plan, approved: true } } : m)),
     );
     setMode("build");
-    void sendMessage("Proceed and build the plan above exactly as described.", "build");
+    if (!excalidrawApi || !planMsg?.plan?.nodes?.length) return;
+    void executePlanDirectly(excalidrawApi, planMsg.plan);
   }
 
   async function sendMessage(userText: string, modeOverride?: ChatMode, retryDepth = 0) {

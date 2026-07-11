@@ -1,4 +1,4 @@
-import type { ToolCall, ToolName } from "./schema";
+import type { ToolCall, ToolName, PlanToolName } from "./schema";
 
 const MIN_COORD = -20000;
 const MAX_COORD = 20000;
@@ -169,6 +169,96 @@ export function sanitizeToolCall(
         return { ok: false, name: call.name, reason: "missing definition" };
       }
       return { ok: true, name: call.name, args: { definition: a.definition } };
+    }
+
+    default:
+      return { ok: false, name: call.name, reason: `unknown tool ${String(call.name)}` };
+  }
+}
+
+export interface SanitizedPlanNode {
+  id: string;
+  label: string;
+  type: string;
+  group?: string;
+}
+
+export interface SanitizedPlanEdge {
+  from: string;
+  to: string;
+  label?: string;
+}
+
+export type SanitizedPlanCall =
+  | {
+      ok: true;
+      name: PlanToolName;
+      args: Record<string, unknown>;
+    }
+  | { ok: false; name: PlanToolName; reason: string };
+
+const PLAN_NODE_TYPES = new Set(["rectangle", "ellipse", "diamond", "text"]);
+
+/**
+ * Structural validation for plan-mode tool calls — plan mode had zero
+ * sanitize coverage before propose_plan became structured data, and
+ * structured data is much easier to get subtly wrong (duplicate ids,
+ * dangling edge references) than free prose ever was.
+ */
+export function sanitizePlanToolCall(call: {
+  name: PlanToolName;
+  arguments: Record<string, unknown>;
+}): SanitizedPlanCall {
+  const a = call.arguments ?? {};
+
+  switch (call.name) {
+    case "ask_question": {
+      if (!isNonEmptyString(a.question)) {
+        return { ok: false, name: call.name, reason: "missing question" };
+      }
+      const args: Record<string, unknown> = { question: a.question };
+      if (Array.isArray(a.options)) {
+        const options = a.options.filter(isNonEmptyString);
+        if (options.length >= 2) args.options = options;
+      }
+      return { ok: true, name: call.name, args };
+    }
+
+    case "propose_plan": {
+      if (!isNonEmptyString(a.summary)) {
+        return { ok: false, name: call.name, reason: "missing summary" };
+      }
+
+      const seenIds = new Set<string>();
+      const nodes: SanitizedPlanNode[] = [];
+      for (const raw of Array.isArray(a.nodes) ? a.nodes : []) {
+        if (!raw || typeof raw !== "object") continue;
+        const n = raw as Record<string, unknown>;
+        if (!isNonEmptyString(n.id) || seenIds.has(n.id)) continue;
+        if (!isNonEmptyString(n.label)) continue;
+        if (!PLAN_NODE_TYPES.has(n.type as string)) continue;
+        seenIds.add(n.id);
+        const node: SanitizedPlanNode = { id: n.id, label: n.label, type: n.type as string };
+        if (isNonEmptyString(n.group)) node.group = n.group;
+        nodes.push(node);
+      }
+      if (nodes.length === 0) {
+        return { ok: false, name: call.name, reason: "no valid nodes" };
+      }
+
+      const nodeIds = new Set(nodes.map((n) => n.id));
+      const edges: SanitizedPlanEdge[] = [];
+      for (const raw of Array.isArray(a.edges) ? a.edges : []) {
+        if (!raw || typeof raw !== "object") continue;
+        const e = raw as Record<string, unknown>;
+        if (!isNonEmptyString(e.from) || !nodeIds.has(e.from)) continue;
+        if (!isNonEmptyString(e.to) || !nodeIds.has(e.to)) continue;
+        const edge: SanitizedPlanEdge = { from: e.from, to: e.to };
+        if (isNonEmptyString(e.label)) edge.label = e.label;
+        edges.push(edge);
+      }
+
+      return { ok: true, name: call.name, args: { summary: a.summary, nodes, edges } };
     }
 
     default:

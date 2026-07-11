@@ -100,10 +100,52 @@ export default function MessageBubble({
 
   if (message.role === "plan") {
     const p = message.plan ?? {};
+    const nodes = p.nodes ?? [];
+    const edges = p.edges ?? [];
+    const labelById = new Map(nodes.map((n) => [n.id, n.label]));
+    const groups = new Map<string, typeof nodes>();
+    const ungrouped: typeof nodes = [];
+    for (const n of nodes) {
+      if (n.group) {
+        if (!groups.has(n.group)) groups.set(n.group, []);
+        groups.get(n.group)!.push(n);
+      } else {
+        ungrouped.push(n);
+      }
+    }
+
     return (
       <div className="max-w-[95%] rounded-lg border border-accent-dim bg-surface px-3 py-2 text-sm text-foreground">
         <p className="text-[10px] uppercase tracking-wide text-dim">proposed plan</p>
-        <div className="mt-1 whitespace-pre-wrap">{renderInline(message.content)}</div>
+        <p className="mt-1">{p.summary ?? message.content}</p>
+
+        {(ungrouped.length > 0 || groups.size > 0) && (
+          <div className="mt-2 space-y-1.5 text-xs text-muted">
+            {ungrouped.map((n) => (
+              <div key={n.id}>
+                • {n.label} <span className="text-dim">({n.type})</span>
+              </div>
+            ))}
+            {Array.from(groups.entries()).map(([group, members]) => (
+              <div key={group}>
+                <span className="text-foreground">{group}:</span>{" "}
+                {members.map((n) => n.label).join(", ")}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {edges.length > 0 && (
+          <div className="mt-2 space-y-1 text-xs text-dim">
+            {edges.map((e, i) => (
+              <div key={i}>
+                {labelById.get(e.from) ?? e.from} → {labelById.get(e.to) ?? e.to}
+                {e.label ? ` (${e.label})` : ""}
+              </div>
+            ))}
+          </div>
+        )}
+
         {p.approved ? (
           <p className="mt-3 text-xs text-accent">✓ approved — building…</p>
         ) : (

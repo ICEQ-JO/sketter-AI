@@ -218,17 +218,41 @@ export const PLAN_TOOL_SCHEMA = [
     function: {
       name: "propose_plan",
       description:
-        "Present the concrete plan you intend to build once you have enough information. The user must approve it before anything is drawn.",
+        "Present the concrete plan you intend to build once you have enough information: structured nodes and edges, not prose. The user must approve it before anything is drawn — on approval it's built directly from this structure, without asking you to reinterpret it.",
       parameters: {
         type: "object",
         properties: {
-          plan: {
+          summary: {
             type: "string",
-            description:
-              "A short, structured plan as a bulleted list: the elements you'll create, their labels, and how they connect.",
+            description: "One sentence describing what you'll build, shown to the user above the plan.",
+          },
+          nodes: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                label: { type: "string" },
+                type: { type: "string", enum: ["rectangle", "ellipse", "diamond", "text"] },
+                group: { type: "string", description: "Optional cluster name." },
+              },
+              required: ["id", "label", "type"],
+            },
+          },
+          edges: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                from: { type: "string" },
+                to: { type: "string" },
+                label: { type: "string" },
+              },
+              required: ["from", "to"],
+            },
           },
         },
-        required: ["plan"],
+        required: ["summary", "nodes", "edges"],
       },
     },
   },

@@ -12,8 +12,24 @@ export interface QuestionData {
   answer?: string;
 }
 
+export interface PlanNode {
+  id: string;
+  label: string;
+  type: "rectangle" | "ellipse" | "diamond" | "text";
+  group?: string;
+}
+
+export interface PlanEdge {
+  from: string;
+  to: string;
+  label?: string;
+}
+
 export interface PlanData {
   approved?: boolean;
+  summary?: string;
+  nodes?: PlanNode[];
+  edges?: PlanEdge[];
 }
 
 export interface ChatMessage {
