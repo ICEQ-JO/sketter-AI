@@ -81,6 +81,7 @@ export default function MessageBubble({
 
   if (message.role === "question") {
     const q = message.question ?? {};
+    const canProceedToPlan = !q.answered;
     return (
       <div className="flex flex-col gap-1">
         <span className="text-[10px] uppercase tracking-wide text-dim">sketter</span>
@@ -103,6 +104,18 @@ export default function MessageBubble({
             </div>
           ) : (
             <QuestionTextAnswer onSubmit={(text) => onAnswerQuestion?.(message.id, text)} />
+          )}
+
+          {canProceedToPlan && (
+            <div className="mt-3 border-t border-border pt-3">
+              <button
+                type="button"
+                onClick={() => onAnswerQuestion?.(message.id, "looks good — propose a plan")}
+                className="text-xs text-dim transition-colors hover:text-accent"
+              >
+                looks good — propose a plan →
+              </button>
+            </div>
           )}
         </div>
       </div>

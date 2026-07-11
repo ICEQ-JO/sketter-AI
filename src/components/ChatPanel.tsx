@@ -219,6 +219,13 @@ export default function ChatPanel({
     void executePlanDirectly(excalidrawApi, planMsg.plan);
   }
 
+  function handleRefinePlan(id: string) {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, plan: { ...m.plan, approved: false } } : m)),
+    );
+    void sendMessage("keep refining", "plan");
+  }
+
   async function sendMessage(userText: string, modeOverride?: ChatMode, retryDepth = 0) {
     if (!userText.trim() || (isStreaming && retryDepth === 0)) return;
     if (!excalidrawApi) return;
@@ -454,6 +461,7 @@ export default function ChatPanel({
               message={m}
               onAnswerQuestion={handleAnswerQuestion}
               onApprovePlan={handleApprovePlan}
+              onRefinePlan={handleRefinePlan}
             />
           ))}
           {isThinking && (
