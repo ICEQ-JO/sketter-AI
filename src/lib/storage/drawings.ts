@@ -22,6 +22,23 @@ export function pendingDrawingNameKey(drawingId: string): string {
   return `sketter.pendingName.${drawingId}`;
 }
 
+const MAX_DRAWING_NAME_LENGTH = 40;
+
+/**
+ * Formats a raw string (first message, plan summary, etc.) into a concise,
+ * lowercase drawing name that matches the app's quiet copy style.
+ */
+export function formatDrawingName(input: string): string {
+  const cleaned = input
+    .replace(/\s+/g, " ")
+    .replace(/[.!?;:,]$/, "")
+    .trim()
+    .toLowerCase();
+  if (cleaned.length === 0) return "";
+  if (cleaned.length <= MAX_DRAWING_NAME_LENGTH) return cleaned;
+  return cleaned.slice(0, MAX_DRAWING_NAME_LENGTH).replace(/\s+\S*$/, "") + "…";
+}
+
 const PERSISTED_APP_STATE_KEYS: (keyof AppState)[] = [
   "viewBackgroundColor",
   "currentItemStrokeColor",

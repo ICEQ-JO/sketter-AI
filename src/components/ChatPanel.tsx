@@ -10,7 +10,7 @@ import type { ToolName } from "@/lib/tools/schema";
 import { sanitizePlanToolCall } from "@/lib/tools/sanitize";
 import { getProvider, DEFAULT_PROVIDER_ID } from "@/lib/providers/registry";
 import { DEFAULT_MODE, MODE_STORAGE_KEY, type ChatMode } from "@/lib/chat/mode";
-import { listDrawings, pendingDrawingNameKey } from "@/lib/storage/drawings";
+import { formatDrawingName, listDrawings, pendingDrawingNameKey } from "@/lib/storage/drawings";
 import type { SavedDrawing } from "@/lib/storage/drawings";
 import type { ChatMessage, PlanData } from "@/components/chat/types";
 import MessageBubble from "@/components/chat/MessageBubble";
@@ -165,6 +165,12 @@ export default function ChatPanel({
       addMessage("question", question, { question: { options, answered: false } });
     } else {
       const { summary, nodes, edges } = sanitized.args as PlanData;
+      if (summary) {
+        localStorage.setItem(
+          pendingDrawingNameKey(currentDrawingId),
+          formatDrawingName(summary),
+        );
+      }
       addMessage("plan", summary ?? "", { plan: { approved: false, summary, nodes, edges } });
     }
   }
@@ -230,7 +236,10 @@ export default function ChatPanel({
     const isFirstMessage = messages.length === 0;
     addMessage("user", userText);
     if (isFirstMessage) {
-      localStorage.setItem(pendingDrawingNameKey(currentDrawingId), userText.slice(0, 40));
+      localStorage.setItem(
+        pendingDrawingNameKey(currentDrawingId),
+        formatDrawingName(userText),
+      );
     }
 
     const history = [...messages, { id: "tmp", role: "user" as const, content: userText }]

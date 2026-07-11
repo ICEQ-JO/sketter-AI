@@ -98,7 +98,7 @@ export default function App() {
         const pendingName = localStorage.getItem(pendingDrawingNameKey(currentDrawingId));
         await saveDrawing(api, {
           id: currentDrawingId,
-          name: existing?.name ?? pendingName ?? "untitled sketch",
+          name: existing?.name ?? pendingName ?? "new chat",
         });
         setSaveStatus("saved");
       } catch {
