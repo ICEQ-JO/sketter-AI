@@ -16,9 +16,105 @@ export interface CanvasSummaryConnection {
   label?: string;
 }
 
+export interface BoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ClusterSummary {
+  id: string;
+  elementIds: string[];
+  labels: string[];
+  bbox: BoundingBox;
+}
+
 export interface CanvasSummary {
   elements: CanvasSummaryElement[];
   connections: CanvasSummaryConnection[];
+  /** Bounding box of everything on the canvas, or null if it's empty. */
+  extent: BoundingBox | null;
+  /** Groups of elements connected via arrows — computed, not left for the model to infer. */
+  clusters: ClusterSummary[];
+  /** An empty region recommended for new, unrelated content. */
+  suggestedFreeRegion: BoundingBox;
+}
+
+const DEFAULT_FREE_REGION: BoundingBox = { x: 0, y: 0, width: 800, height: 600 };
+const FREE_REGION_MARGIN = 200;
+const FREE_REGION_SIZE = { width: 600, height: 400 };
+
+function elementBbox(el: CanvasSummaryElement): BoundingBox {
+  return { x: el.x, y: el.y, width: el.width ?? 0, height: el.height ?? 0 };
+}
+
+function unionBbox(a: BoundingBox, b: BoundingBox): BoundingBox {
+  const minX = Math.min(a.x, b.x);
+  const minY = Math.min(a.y, b.y);
+  const maxX = Math.max(a.x + a.width, b.x + b.width);
+  const maxY = Math.max(a.y + a.height, b.y + b.height);
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function computeExtent(elements: CanvasSummaryElement[]): BoundingBox | null {
+  if (elements.length === 0) return null;
+  return elements.map(elementBbox).reduce(unionBbox);
+}
+
+function computeClusters(
+  elements: CanvasSummaryElement[],
+  connections: CanvasSummaryConnection[],
+): ClusterSummary[] {
+  const byId = new Map(elements.map((el) => [el.id, el]));
+  const adjacency = new Map<string, Set<string>>();
+  for (const { from, to } of connections) {
+    if (!byId.has(from) || !byId.has(to)) continue;
+    if (!adjacency.has(from)) adjacency.set(from, new Set());
+    if (!adjacency.has(to)) adjacency.set(to, new Set());
+    adjacency.get(from)!.add(to);
+    adjacency.get(to)!.add(from);
+  }
+
+  const visited = new Set<string>();
+  const clusters: ClusterSummary[] = [];
+
+  for (const id of adjacency.keys()) {
+    if (visited.has(id)) continue;
+    const componentIds: string[] = [];
+    const queue = [id];
+    visited.add(id);
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      componentIds.push(current);
+      for (const neighbor of adjacency.get(current) ?? []) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          queue.push(neighbor);
+        }
+      }
+    }
+
+    const members = componentIds.map((cid) => byId.get(cid)!).filter(Boolean);
+    if (members.length === 0) continue;
+    clusters.push({
+      id: `cluster-${clusters.length}`,
+      elementIds: componentIds,
+      labels: members.map((m) => m.text).filter((t): t is string => !!t),
+      bbox: members.map(elementBbox).reduce(unionBbox),
+    });
+  }
+
+  return clusters;
+}
+
+function computeSuggestedFreeRegion(extent: BoundingBox | null): BoundingBox {
+  if (!extent) return DEFAULT_FREE_REGION;
+  return {
+    x: extent.x + extent.width + FREE_REGION_MARGIN,
+    y: extent.y,
+    ...FREE_REGION_SIZE,
+  };
 }
 
 /**
@@ -26,6 +122,11 @@ export interface CanvasSummary {
  * Excalidraw JSON — strips stroke widths, roughness seeds, version numbers,
  * and binding internals the model doesn't need to reason about. This is the
  * single biggest lever for keeping small/cheap models reliable.
+ *
+ * Also computes spatial facts (extent, connected-component clusters, a
+ * suggested empty region) so the model doesn't have to infer them itself
+ * from a flat coordinate list — spatial reasoning is done by code, not
+ * left to the LLM.
  */
 export function buildCanvasSummary(elements: readonly ExcalidrawElement[]): CanvasSummary {
   const live = elements.filter((el) => !el.isDeleted);
@@ -74,5 +175,13 @@ export function buildCanvasSummary(elements: readonly ExcalidrawElement[]): Canv
     });
   }
 
-  return { elements: summaryElements, connections };
+  const extent = computeExtent(summaryElements);
+
+  return {
+    elements: summaryElements,
+    connections,
+    extent,
+    clusters: computeClusters(summaryElements, connections),
+    suggestedFreeRegion: computeSuggestedFreeRegion(extent),
+  };
 }
