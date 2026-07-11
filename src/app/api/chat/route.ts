@@ -72,8 +72,8 @@ export async function POST(req: Request) {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": req.headers.get("origin") ?? "https://excalichat.app",
-      "X-Title": "ExcaliChat",
+      "HTTP-Referer": req.headers.get("origin") ?? "https://github.com/ICEQ-JO/sketter-AI",
+      "X-Title": "Sketter",
     },
     body: JSON.stringify({
       model,
