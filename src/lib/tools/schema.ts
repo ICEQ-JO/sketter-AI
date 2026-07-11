@@ -151,3 +151,50 @@ export interface ToolCall {
   name: ToolName;
   arguments: Record<string, unknown>;
 }
+
+// Tools available in PLAN mode. The model can't touch the canvas here — it
+// can only ask clarifying questions or propose a plan for the user to
+// approve, mirroring a Claude-Code-style plan/approve loop.
+export const PLAN_TOOL_SCHEMA = [
+  {
+    type: "function",
+    function: {
+      name: "ask_question",
+      description:
+        "Ask the user a single clarifying question before proposing a plan. Prefer multiple-choice (2-5 short options) when there's a natural set of choices; omit options for a free-text question. Ask one question per call.",
+      parameters: {
+        type: "object",
+        properties: {
+          question: { type: "string" },
+          options: {
+            type: "array",
+            items: { type: "string" },
+            description: "2-5 short choices. Omit for a free-text question.",
+          },
+        },
+        required: ["question"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "propose_plan",
+      description:
+        "Present the concrete plan you intend to build once you have enough information. The user must approve it before anything is drawn.",
+      parameters: {
+        type: "object",
+        properties: {
+          plan: {
+            type: "string",
+            description:
+              "A short, structured plan as a bulleted list: the elements you'll create, their labels, and how they connect.",
+          },
+        },
+        required: ["plan"],
+      },
+    },
+  },
+] as const;
+
+export type PlanToolName = (typeof PLAN_TOOL_SCHEMA)[number]["function"]["name"];
