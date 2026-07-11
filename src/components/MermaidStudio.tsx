@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import ExcalidrawCanvas from "@/components/ExcalidrawCanvas";
+import ThemeQuickToggle from "@/components/ThemeQuickToggle";
 import { formatDrawingName, newDrawingId, saveDrawing } from "@/lib/storage/drawings";
 
 const PARSE_DEBOUNCE_MS = 400;
@@ -74,6 +75,26 @@ function detachElements(
   });
 }
 
+function PanelIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <line x1="9" y1="4" x2="9" y2="20" />
+    </svg>
+  );
+}
+
 export default function MermaidStudio() {
   const router = useRouter();
   const [source, setSource] = useState(EXAMPLE);
@@ -81,6 +102,7 @@ export default function MermaidStudio() {
   const [notice, setNotice] = useState<string | null>(null);
   const [excalidrawApi, setExcalidrawApi] = useState<ExcalidrawImperativeAPI | null>(null);
   const [status, setStatus] = useState<Status>("idle");
+  const [editorOpen, setEditorOpen] = useState(true);
   const drawingIdRef = useRef<string>(newDrawingId());
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -178,18 +200,31 @@ export default function MermaidStudio() {
   return (
     <div className="flex h-dvh w-full flex-col overflow-hidden bg-background text-foreground">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4">
-        <Link
-          href="/"
-          className="flex items-center gap-2 rounded px-3 py-2 text-base font-medium text-muted transition-colors hover:text-foreground"
-        >
-          <span aria-hidden>←</span>
-          <span>sketter</span>
-        </Link>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setEditorOpen((v) => !v)}
+            className="rounded border border-border px-3.5 py-2.5 text-base text-muted hover:text-foreground"
+            aria-label="Toggle mermaid editor"
+            title="Toggle mermaid editor"
+          >
+            <PanelIcon />
+          </button>
+
+          <Link
+            href="/"
+            className="flex items-center gap-2 rounded px-3 py-2 text-base font-medium text-muted transition-colors hover:text-foreground"
+          >
+            <span aria-hidden>←</span>
+            <span>sketter</span>
+          </Link>
+        </div>
 
         <div className="flex items-center gap-2">
           <span className="mr-1 text-[11px] text-dim">
             {status === "saving" ? "saving…" : status === "saved" ? "saved" : ""}
           </span>
+          <ThemeQuickToggle />
           <button
             type="button"
             onClick={() => void handleDownloadPng()}
@@ -222,31 +257,33 @@ export default function MermaidStudio() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <div className="flex w-[380px] shrink-0 flex-col border-r border-border">
-          <div className="border-b border-border px-4 py-3">
-            <h1 className="text-sm font-medium text-foreground">mermaid → canvas</h1>
-            <p className="mt-1 text-xs text-muted">
-              paste mermaid syntax on the left, get a live excalidraw canvas on the right.
-            </p>
+        {editorOpen && (
+          <div className="flex w-[380px] shrink-0 flex-col border-r border-border">
+            <div className="border-b border-border px-4 py-3">
+              <h1 className="text-sm font-medium text-foreground">mermaid → canvas</h1>
+              <p className="mt-1 text-xs text-muted">
+                paste mermaid syntax on the left, get a live excalidraw canvas on the right.
+              </p>
+            </div>
+            <textarea
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              spellCheck={false}
+              className="min-h-0 flex-1 resize-none bg-background p-4 font-mono text-xs text-foreground outline-none placeholder:text-dim"
+              placeholder="graph TD&#10;  A --> B"
+            />
+            {error && (
+              <div className="shrink-0 border-t border-border bg-surface px-4 py-3 text-xs text-red-400">
+                {error}
+              </div>
+            )}
+            {!error && notice && (
+              <div className="shrink-0 border-t border-border bg-surface px-4 py-3 text-xs text-amber-400">
+                {notice}
+              </div>
+            )}
           </div>
-          <textarea
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            spellCheck={false}
-            className="min-h-0 flex-1 resize-none bg-background p-4 font-mono text-xs text-foreground outline-none placeholder:text-dim"
-            placeholder="graph TD&#10;  A --> B"
-          />
-          {error && (
-            <div className="shrink-0 border-t border-border bg-surface px-4 py-3 text-xs text-red-400">
-              {error}
-            </div>
-          )}
-          {!error && notice && (
-            <div className="shrink-0 border-t border-border bg-surface px-4 py-3 text-xs text-amber-400">
-              {notice}
-            </div>
-          )}
-        </div>
+        )}
 
         <div className="min-h-0 flex-1">
           <ExcalidrawCanvas onReady={setExcalidrawApi} />
