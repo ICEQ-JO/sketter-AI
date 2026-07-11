@@ -22,6 +22,23 @@ export function pendingDrawingNameKey(drawingId: string): string {
   return `sketter.pendingName.${drawingId}`;
 }
 
+const MAX_DRAWING_NAME_LENGTH = 40;
+
+/**
+ * Formats a raw string (first message, plan summary, etc.) into a concise,
+ * lowercase drawing name that matches the app's quiet copy style.
+ */
+export function formatDrawingName(input: string): string {
+  const cleaned = input
+    .replace(/\s+/g, " ")
+    .replace(/[.!?;:,]$/, "")
+    .trim()
+    .toLowerCase();
+  if (cleaned.length === 0) return "";
+  if (cleaned.length <= MAX_DRAWING_NAME_LENGTH) return cleaned;
+  return cleaned.slice(0, MAX_DRAWING_NAME_LENGTH).replace(/\s+\S*$/, "") + "…";
+}
+
 const PERSISTED_APP_STATE_KEYS: (keyof AppState)[] = [
   "viewBackgroundColor",
   "currentItemStrokeColor",
@@ -98,6 +115,21 @@ export async function renameDrawing(id: string, name: string): Promise<void> {
 
 export async function deleteDrawing(id: string): Promise<void> {
   await del(id, drawingsStore);
+  await del(`messages-${id}`, drawingsStore);
+}
+
+export async function saveMessages(id: string, messages: unknown[]): Promise<void> {
+  if (!id) return;
+  await set(`messages-${id}`, messages, drawingsStore);
+}
+
+export async function loadMessages(id: string): Promise<unknown[]> {
+  if (!id) return [];
+  try {
+    return (await get<unknown[]>(`messages-${id}`, drawingsStore)) ?? [];
+  } catch {
+    return [];
+  }
 }
 
 export async function clearAllDrawings(): Promise<void> {

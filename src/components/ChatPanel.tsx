@@ -10,7 +10,13 @@ import type { ToolName } from "@/lib/tools/schema";
 import { sanitizePlanToolCall } from "@/lib/tools/sanitize";
 import { getProvider, DEFAULT_PROVIDER_ID } from "@/lib/providers/registry";
 import { DEFAULT_MODE, MODE_STORAGE_KEY, type ChatMode } from "@/lib/chat/mode";
-import { listDrawings, pendingDrawingNameKey } from "@/lib/storage/drawings";
+import {
+  formatDrawingName,
+  listDrawings,
+  loadMessages,
+  pendingDrawingNameKey,
+  saveMessages,
+} from "@/lib/storage/drawings";
 import type { SavedDrawing } from "@/lib/storage/drawings";
 import type { ChatMessage, PlanData } from "@/components/chat/types";
 import MessageBubble from "@/components/chat/MessageBubble";
@@ -80,6 +86,20 @@ export default function ChatPanel({
       void listDrawings().then(setDrawings);
     }
   }, [saveStatus]);
+
+  useEffect(() => {
+    if (!currentDrawingId) return;
+    void loadMessages(currentDrawingId).then((saved) => {
+      if (Array.isArray(saved) && saved.length > 0) {
+        setMessages(saved as ChatMessage[]);
+      }
+    });
+  }, [currentDrawingId]);
+
+  useEffect(() => {
+    if (!currentDrawingId) return;
+    void saveMessages(currentDrawingId, messages);
+  }, [currentDrawingId, messages]);
 
   useEffect(() => {
     localStorage.setItem("sketter.providerId", providerId);
@@ -165,6 +185,12 @@ export default function ChatPanel({
       addMessage("question", question, { question: { options, answered: false } });
     } else {
       const { summary, nodes, edges } = sanitized.args as PlanData;
+      if (summary) {
+        localStorage.setItem(
+          pendingDrawingNameKey(currentDrawingId),
+          formatDrawingName(summary),
+        );
+      }
       addMessage("plan", summary ?? "", { plan: { approved: false, summary, nodes, edges } });
     }
   }
@@ -213,6 +239,13 @@ export default function ChatPanel({
     void executePlanDirectly(excalidrawApi, planMsg.plan);
   }
 
+  function handleRefinePlan(id: string) {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, plan: { ...m.plan, approved: false } } : m)),
+    );
+    void sendMessage("keep refining", "plan");
+  }
+
   async function sendMessage(userText: string, modeOverride?: ChatMode, retryDepth = 0) {
     if (!userText.trim() || (isStreaming && retryDepth === 0)) return;
     if (!excalidrawApi) return;
@@ -230,7 +263,10 @@ export default function ChatPanel({
     const isFirstMessage = messages.length === 0;
     addMessage("user", userText);
     if (isFirstMessage) {
-      localStorage.setItem(pendingDrawingNameKey(currentDrawingId), userText.slice(0, 40));
+      localStorage.setItem(
+        pendingDrawingNameKey(currentDrawingId),
+        formatDrawingName(userText),
+      );
     }
 
     const history = [...messages, { id: "tmp", role: "user" as const, content: userText }]
@@ -438,19 +474,23 @@ export default function ChatPanel({
           </span>
         </div>
 
-        <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+        <div ref={scrollRef} className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
           {messages.map((m) => (
             <MessageBubble
               key={m.id}
               message={m}
               onAnswerQuestion={handleAnswerQuestion}
               onApprovePlan={handleApprovePlan}
+              onRefinePlan={handleRefinePlan}
             />
           ))}
           {isThinking && (
-            <div className="flex max-w-[85%] items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground animate-pulse">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
-              <span>{mode === "plan" ? "sketter is thinking…" : "sketter is drawing…"}</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-wide text-dim">sketter</span>
+              <div className="flex max-w-[85%] items-center gap-2 rounded-2xl rounded-tl-md border border-border bg-surface px-5 py-3 text-sm text-foreground animate-pulse">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+                <span>{mode === "plan" ? "thinking…" : "drawing…"}</span>
+              </div>
             </div>
           )}
         </div>

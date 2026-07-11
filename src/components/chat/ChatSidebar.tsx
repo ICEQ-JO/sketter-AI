@@ -27,7 +27,7 @@ export default function ChatSidebar({
   onLoadDrawing,
 }: ChatSidebarProps) {
   return (
-    <div className="flex h-full w-64 shrink-0 flex-col border-r border-border bg-surface">
+    <div className="flex h-full w-72 shrink-0 flex-col border-r border-border bg-surface">
       <div className="border-b border-border p-3">
         <button
           type="button"
@@ -54,15 +54,16 @@ export default function ChatSidebar({
                   key={d.id}
                   type="button"
                   onClick={() => onLoadDrawing(d.id)}
+                  title={d.name}
                   className={
-                    "w-full rounded px-2 py-2 text-left text-xs transition-colors " +
+                    "w-full rounded px-3 py-2.5 text-left text-xs transition-colors " +
                     (isActive
                       ? "bg-accent/10 text-foreground"
                       : "text-muted hover:bg-surface-strong hover:text-foreground")
                   }
                 >
-                  <span className="block truncate">{d.name}</span>
-                  <span className="block mt-0.5 text-[10px] text-dim">
+                  <span className="block line-clamp-2 leading-snug">{d.name}</span>
+                  <span className="block mt-1 text-[10px] text-dim">
                     {relativeTime(d.updatedAt)}
                   </span>
                 </button>
