@@ -21,6 +21,18 @@ const OVERLAP_TOLERANCE = 4;
 const OVERLAP_PADDING = 24;
 const OUT_OF_BOUNDS_THRESHOLD = 8000;
 
+/** Whether `outer` fully encloses `inner` (with a little slack) — a deliberate
+ *  container/frame around content, not accidental stacking that needs fixing. */
+function contains(outer: ExcalidrawElement, inner: ExcalidrawElement): boolean {
+  const slack = 2;
+  return (
+    outer.x - slack <= inner.x &&
+    outer.y - slack <= inner.y &&
+    outer.x + outer.width + slack >= inner.x + inner.width &&
+    outer.y + outer.height + slack >= inner.y + inner.height
+  );
+}
+
 function groupByTurn(
   elements: ExcalidrawElement[],
   createdThisTurn?: Set<string>,
@@ -63,6 +75,7 @@ export function verifyAndFix(
       const ix = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
       const iy = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
       if (ix <= OVERLAP_TOLERANCE || iy <= OVERLAP_TOLERANCE) continue;
+      if (contains(a, b) || contains(b, a)) continue; // deliberate container/frame, not accidental stacking
 
       const target = store.has(b.id) ? b : store.has(a.id) ? a : null;
       if (!target) {
