@@ -119,11 +119,17 @@ export async function deleteDrawing(id: string): Promise<void> {
 }
 
 export async function saveMessages(id: string, messages: unknown[]): Promise<void> {
+  if (!id) return;
   await set(`messages-${id}`, messages, drawingsStore);
 }
 
 export async function loadMessages(id: string): Promise<unknown[]> {
-  return (await get<unknown[]>(`messages-${id}`, drawingsStore)) ?? [];
+  if (!id) return [];
+  try {
+    return (await get<unknown[]>(`messages-${id}`, drawingsStore)) ?? [];
+  } catch {
+    return [];
+  }
 }
 
 export async function clearAllDrawings(): Promise<void> {

@@ -88,12 +88,16 @@ export default function ChatPanel({
   }, [saveStatus]);
 
   useEffect(() => {
+    if (!currentDrawingId) return;
     void loadMessages(currentDrawingId).then((saved) => {
-      if (saved.length > 0) setMessages(saved as ChatMessage[]);
+      if (Array.isArray(saved) && saved.length > 0) {
+        setMessages(saved as ChatMessage[]);
+      }
     });
   }, [currentDrawingId]);
 
   useEffect(() => {
+    if (!currentDrawingId) return;
     void saveMessages(currentDrawingId, messages);
   }, [currentDrawingId, messages]);
 
