@@ -68,7 +68,13 @@ export default function MermaidStudio() {
           parseMermaidQuietly(definition),
           import("@excalidraw/excalidraw"),
         ]);
-        const converted = convertToExcalidrawElements(elements, { regenerateIds: false });
+        // regenerateIds: true — convertToExcalidrawElements tracks emitted ids in a
+        // store that persists across calls, so re-parsing on every keystroke with
+        // stable mermaid-derived ids trips its "duplicate id" guard and corrupts
+        // arrows. Minting fresh ids each parse avoids that entirely.
+        const converted = convertToExcalidrawElements(elements, { regenerateIds: true }).map(
+          (el) => ({ ...el, groupIds: [] }),
+        );
         excalidrawApi.updateScene({ elements: converted });
         if (files) {
           const fileList = Object.values(files);
