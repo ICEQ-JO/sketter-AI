@@ -38,7 +38,28 @@ export function sanitizeToolCall(
   const a = call.arguments ?? {};
 
   switch (call.name) {
-    case "create_element": {
+    case "add_node": {
+      if (!isNonEmptyString(a.id)) {
+        return { ok: false, name: call.name, reason: "missing id" };
+      }
+      const NODE_TYPES = new Set(["rectangle", "ellipse", "diamond", "text"]);
+      if (!NODE_TYPES.has(a.type as string)) {
+        return { ok: false, name: call.name, reason: `invalid type ${String(a.type)}` };
+      }
+      const type = a.type as string;
+      const args: Record<string, unknown> = { id: a.id, type };
+      if (SHAPE_TYPES.has(type)) {
+        args.width = clampNum(a.width, 120);
+        args.height = clampNum(a.height, 80);
+      }
+      if (isNonEmptyString(a.text)) args.text = a.text;
+      if (isNonEmptyString(a.group)) args.group = a.group;
+      if (isNonEmptyString(a.strokeColor)) args.strokeColor = a.strokeColor;
+      if (isNonEmptyString(a.backgroundColor)) args.backgroundColor = a.backgroundColor;
+      return { ok: true, name: call.name, args };
+    }
+
+    case "add_freeform": {
       if (!isNonEmptyString(a.id)) {
         return { ok: false, name: call.name, reason: "missing id" };
       }

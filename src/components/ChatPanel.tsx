@@ -275,6 +275,11 @@ export default function ChatPanel({
         }
       }
 
+      if (effectiveMode === "build" && excalidrawApi) {
+        // No-ops if nothing is pending layout — safe to call unconditionally.
+        sceneStore.runAutoLayout(excalidrawApi, canvasSummary);
+      }
+
       setMessages((prev) =>
         prev.map((m) => (m.id === "streaming-assistant" ? { ...m, id: crypto.randomUUID() } : m)),
       );

@@ -26,8 +26,11 @@ export async function executeToolCall(
   }
 
   switch (sanitized.name) {
-    case "create_element":
-      store.createElement(api, sanitized.args);
+    case "add_node":
+      store.addNode(api, sanitized.args);
+      break;
+    case "add_freeform":
+      store.addFreeform(api, sanitized.args);
       break;
     case "connect":
       store.connect(api, sanitized.args);

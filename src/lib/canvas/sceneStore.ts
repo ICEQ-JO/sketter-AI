@@ -7,6 +7,8 @@ import type {
 } from "@excalidraw/excalidraw/types";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import { collectForeignElements, findDeadSkeletonIds, syncSkeletonsFromLive } from "./reconcile";
+import { layoutGraph, type GraphLayoutEdge, type GraphLayoutNode } from "../layout/dagreLayout";
+import type { CanvasSummary } from "./summary";
 
 /**
  * Holds the AI-authored elements as skeleton definitions keyed by our own
@@ -25,6 +27,19 @@ export class SceneStore {
   private skeletons = new Map<string, ExcalidrawElementSkeleton>();
   private mermaidElements: ExcalidrawElement[] = [];
   private groupCounter = 0;
+  /** Ids added via `addNode` that don't have a real position yet — cleared once `runAutoLayout` places them. */
+  private pendingLayoutIds = new Set<string>();
+  /** Group hint per node id, used by `runAutoLayout`; kept out of the skeleton itself so it never leaks into the compiled Excalidraw element. */
+  private nodeGroups = new Map<string, string>();
+  /**
+   * Ids (skeleton + mermaid) that have been successfully pushed to the live
+   * scene at least once. "Dead" pruning below only applies to ids in this
+   * set — otherwise a node added in *this* commit (not live yet, since
+   * reconcile() always reads live state from *before* the current push)
+   * would be indistinguishable from one the user just deleted by hand, and
+   * get wiped before it was ever rendered.
+   */
+  private confirmedLiveIds = new Set<string>();
 
   has(id: string): boolean {
     return this.skeletons.has(id);
@@ -37,13 +52,20 @@ export class SceneStore {
    */
   private reconcile(api: ExcalidrawImperativeAPI): ExcalidrawElement[] {
     const live = api.getSceneElements();
+    const liveIds = new Set(live.filter((el) => !el.isDeleted).map((el) => el.id));
 
     syncSkeletonsFromLive(this.skeletons, live);
-    for (const id of findDeadSkeletonIds(this.skeletons, live)) {
+    const deadIds = findDeadSkeletonIds(this.skeletons, live).filter((id) =>
+      this.confirmedLiveIds.has(id),
+    );
+    for (const id of deadIds) {
       this.skeletons.delete(id);
+      this.pendingLayoutIds.delete(id);
+      this.nodeGroups.delete(id);
     }
-    const liveIds = new Set(live.filter((el) => !el.isDeleted).map((el) => el.id));
-    this.mermaidElements = this.mermaidElements.filter((el) => liveIds.has(el.id));
+    this.mermaidElements = this.mermaidElements.filter(
+      (el) => !this.confirmedLiveIds.has(el.id) || liveIds.has(el.id),
+    );
 
     return collectForeignElements(
       live,
@@ -63,9 +85,50 @@ export class SceneStore {
 
   private commit(api: ExcalidrawImperativeAPI) {
     api.updateScene({ elements: this.compile(api) });
+    this.confirmedLiveIds = new Set([
+      ...this.skeletons.keys(),
+      ...this.mermaidElements.map((el) => el.id),
+    ]);
   }
 
-  createElement(api: ExcalidrawImperativeAPI, args: Record<string, unknown>) {
+  /**
+   * Adds a node that participates in the connected graph — no position is
+   * assigned here; it's tracked in `pendingLayoutIds` until `runAutoLayout`
+   * computes real geometry deterministically via dagre.
+   */
+  addNode(api: ExcalidrawImperativeAPI, args: Record<string, unknown>) {
+    const { id, type, text, group, width, height, strokeColor, backgroundColor } = args as {
+      id: string;
+      type: string;
+      text?: string;
+      group?: string;
+      width?: number;
+      height?: number;
+      strokeColor?: string;
+      backgroundColor?: string;
+    };
+
+    const base: Record<string, unknown> = { id, type, x: 0, y: 0 };
+    if (width !== undefined) base.width = width;
+    if (height !== undefined) base.height = height;
+    if (strokeColor) base.strokeColor = strokeColor;
+    if (backgroundColor) base.backgroundColor = backgroundColor;
+    if (text) {
+      if (type === "text") {
+        base.text = text;
+      } else {
+        base.label = { text };
+      }
+    }
+
+    this.skeletons.set(id, base as ExcalidrawElementSkeleton);
+    this.pendingLayoutIds.add(id);
+    if (group) this.nodeGroups.set(id, group);
+    this.commit(api);
+  }
+
+  /** Explicit escape hatch for standalone content (annotations, notes) not part of the connected graph — keeps an explicit position, never auto-laid-out. */
+  addFreeform(api: ExcalidrawImperativeAPI, args: Record<string, unknown>) {
     const { id, type, x, y, width, height, text, strokeColor, backgroundColor } = args as {
       id: string;
       type: string;
@@ -92,6 +155,79 @@ export class SceneStore {
     }
 
     this.skeletons.set(id, base as ExcalidrawElementSkeleton);
+    this.commit(api);
+  }
+
+  /**
+   * Computes real, non-overlapping positions for every node added via
+   * `addNode` since the last layout pass, using dagre. New subgraphs are
+   * anchored near a connected already-positioned neighbor (if `connect`
+   * linked one in) or `canvasSummary.suggestedFreeRegion` otherwise —
+   * already-positioned nodes are never moved by this pass.
+   */
+  runAutoLayout(api: ExcalidrawImperativeAPI, canvasSummary: CanvasSummary) {
+    if (this.pendingLayoutIds.size === 0) return;
+    const pending = this.pendingLayoutIds;
+
+    const nodes: GraphLayoutNode[] = [];
+    for (const id of pending) {
+      const skeleton = this.skeletons.get(id) as Record<string, unknown> | undefined;
+      if (!skeleton) continue;
+      nodes.push({
+        id,
+        label: typeof skeleton.text === "string" ? skeleton.text : undefined,
+        width: Number(skeleton.width ?? 120),
+        height: Number(skeleton.height ?? 80),
+        group: this.nodeGroups.get(id),
+      });
+    }
+
+    const live = api.getSceneElements().filter((el) => !el.isDeleted);
+    const liveById = new Map(live.map((el) => [el.id, el]));
+
+    const internalEdges: GraphLayoutEdge[] = [];
+    let neighborAnchor: { x: number; y: number } | null = null;
+
+    for (const skeleton of this.skeletons.values()) {
+      const s = skeleton as unknown as { type?: string; start?: { id?: string }; end?: { id?: string } };
+      if (s.type !== "arrow") continue;
+      const from = s.start?.id;
+      const to = s.end?.id;
+      if (!from || !to) continue;
+      const fromPending = pending.has(from);
+      const toPending = pending.has(to);
+      if (fromPending && toPending) {
+        internalEdges.push({ from, to });
+      } else if ((fromPending || toPending) && !neighborAnchor) {
+        const externalId = fromPending ? to : from;
+        const externalEl = liveById.get(externalId);
+        if (externalEl) {
+          neighborAnchor = { x: externalEl.x, y: externalEl.y + (externalEl.height ?? 0) + 120 };
+        }
+      }
+    }
+
+    const anchor =
+      neighborAnchor ?? {
+        x: canvasSummary.suggestedFreeRegion.x,
+        y: canvasSummary.suggestedFreeRegion.y,
+      };
+
+    const { positions } = layoutGraph(nodes, internalEdges, {
+      anchorX: anchor.x,
+      anchorY: anchor.y,
+    });
+
+    for (const [id, rect] of positions) {
+      const skeleton = this.skeletons.get(id) as Record<string, unknown> | undefined;
+      if (!skeleton) continue;
+      skeleton.x = rect.x;
+      skeleton.y = rect.y;
+      skeleton.width = rect.width;
+      skeleton.height = rect.height;
+    }
+
+    this.pendingLayoutIds.clear();
     this.commit(api);
   }
 
@@ -191,6 +327,8 @@ export class SceneStore {
   deleteElement(api: ExcalidrawImperativeAPI, args: Record<string, unknown>) {
     const { id } = args as { id: string };
     this.skeletons.delete(id);
+    this.pendingLayoutIds.delete(id);
+    this.nodeGroups.delete(id);
     for (const [key, el] of this.skeletons) {
       const s = el as unknown as { start?: { id?: string }; end?: { id?: string } };
       if (s.start?.id === id || s.end?.id === id) this.skeletons.delete(key);
@@ -253,6 +391,9 @@ export class SceneStore {
   reset(api: ExcalidrawImperativeAPI) {
     this.skeletons.clear();
     this.mermaidElements = [];
+    this.pendingLayoutIds.clear();
+    this.nodeGroups.clear();
+    this.confirmedLiveIds.clear();
     api.resetScene();
   }
 }

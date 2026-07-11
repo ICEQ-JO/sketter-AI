@@ -6,14 +6,50 @@ export const TOOL_SCHEMA = [
   {
     type: "function",
     function: {
-      name: "create_element",
-      description: "Create a new shape or text element on the canvas.",
+      name: "add_node",
+      description:
+        "Add a node that participates in the diagram's connected graph — anything you'll later connect to other elements via `connect`. Do not specify a position: layout is computed automatically once your tool calls finish, arranging nodes by their connections and group. Use add_freeform instead for standalone content not part of the graph.",
       parameters: {
         type: "object",
         properties: {
           id: {
             type: "string",
             description: "Short, human-readable, unique id, e.g. 'backend'.",
+          },
+          type: {
+            type: "string",
+            enum: ["rectangle", "ellipse", "diamond", "text"],
+          },
+          text: {
+            type: "string",
+            description: "Optional label inside/near the shape.",
+          },
+          group: {
+            type: "string",
+            description:
+              "Optional cluster name, e.g. 'frontend', 'backend'. Nodes sharing a group are laid out near each other.",
+          },
+          width: { type: "number", description: "Only if you need a non-default size." },
+          height: { type: "number", description: "Only if you need a non-default size." },
+          strokeColor: { type: "string" },
+          backgroundColor: { type: "string" },
+        },
+        required: ["id", "type"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_freeform",
+      description:
+        "Place a standalone element at an explicit position — for annotations, titles, or notes that are NOT part of the connected node/edge graph. If this should connect to or cluster with other elements, use add_node instead.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            description: "Short, human-readable, unique id, e.g. 'note_1'.",
           },
           type: {
             type: "string",
@@ -38,7 +74,8 @@ export const TOOL_SCHEMA = [
     type: "function",
     function: {
       name: "connect",
-      description: "Draw an arrow between two existing elements by id.",
+      description:
+        "Draw an arrow between two existing elements by id. Arrows between add_node elements participate in the graph and influence automatic layout.",
       parameters: {
         type: "object",
         properties: {
