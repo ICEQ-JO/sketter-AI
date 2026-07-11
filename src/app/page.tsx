@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SKETTER_BANNER } from "@/lib/ascii/banner";
 
 interface NavItem {
   index: string;
@@ -123,10 +124,13 @@ export default function LandingPage() {
 
       <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-8 sm:px-20">
         <div style={{ animation: "fade-up 0.6s ease-out both" }}>
-          <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
-            sketter
-          </h1>
-          <p className="mt-2 text-lg text-muted sm:text-xl">
+          <pre
+            className="select-none whitespace-pre text-[5px] leading-[6px] text-accent sm:text-[8px] sm:leading-[9px]"
+            aria-label="Sketter"
+          >
+            {SKETTER_BANNER}
+          </pre>
+          <p className="mt-4 text-lg text-muted sm:text-xl">
             chat with any ai model to draw and iterate on excalidraw diagrams
           </p>
         </div>
