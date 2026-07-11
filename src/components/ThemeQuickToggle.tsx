@@ -12,7 +12,11 @@ export default function ThemeQuickToggle() {
       aria-label="Toggle theme"
       title="Toggle theme"
     >
-      {theme === "dark" ? "☀" : "◐"}
+      {/* SSR always guesses "dark" (no localStorage access); the inline
+          theme-init script sets the real class before hydration, so the
+          client's first render can legitimately differ here — expected,
+          not a bug. */}
+      <span suppressHydrationWarning>{theme === "dark" ? "☀" : "◐"}</span>
     </button>
   );
 }
