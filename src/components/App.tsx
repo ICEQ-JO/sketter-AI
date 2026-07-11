@@ -30,6 +30,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showChat, setShowChat] = useState(true);
   const [showCanvas, setShowCanvas] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [chatWidthPct, setChatWidthPct] = useState(() => {
     const stored = Number(localStorage.getItem(CHAT_WIDTH_STORAGE_KEY));
     return stored >= MIN_PANEL_PCT && stored <= MAX_PANEL_PCT ? stored : DEFAULT_CHAT_WIDTH_PCT;
@@ -39,7 +40,7 @@ export default function App() {
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const [currentDrawingId] = useState(() => {
+  const [currentDrawingId, setCurrentDrawingId] = useState(() => {
     const fromUrl = searchParams.get("drawingId");
     if (fromUrl) return fromUrl;
     const stored = localStorage.getItem(CURRENT_DRAWING_STORAGE_KEY);
@@ -116,6 +117,32 @@ export default function App() {
     setShowCanvas((v) => !v);
   }
 
+  function handleNewChat() {
+    if (!excalidrawApi) return;
+    const id = newDrawingId();
+    setCurrentDrawingId(id);
+    localStorage.setItem(CURRENT_DRAWING_STORAGE_KEY, id);
+    sceneStore.reset(excalidrawApi);
+    window.history.replaceState(null, "", "/sketter");
+  }
+
+  async function handleLoadDrawing(id: string) {
+    if (!excalidrawApi) return;
+    setCurrentDrawingId(id);
+    localStorage.setItem(CURRENT_DRAWING_STORAGE_KEY, id);
+    const saved = await loadDrawing(id);
+    sceneStore.reset(excalidrawApi);
+    if (!saved) return;
+    const { elements, appState, files } = saved.sceneData;
+    excalidrawApi.updateScene({
+      elements: [...elements],
+      appState: appState as Parameters<typeof excalidrawApi.updateScene>[0]["appState"],
+    });
+    const fileList = Object.values(files);
+    if (fileList.length > 0) excalidrawApi.addFiles(fileList);
+    window.history.replaceState(null, "", `/sketter?drawingId=${id}`);
+  }
+
   function startDrag(e: React.PointerEvent) {
     e.preventDefault();
     const container = containerRef.current;
@@ -142,6 +169,7 @@ export default function App() {
         showCanvas={showCanvas}
         onToggleChat={toggleChat}
         onToggleCanvas={toggleCanvas}
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
       />
       <div ref={containerRef} className="relative flex min-h-0 flex-1 overflow-hidden">
         <aside
@@ -152,6 +180,7 @@ export default function App() {
           style={{ width: showChat ? (showCanvas ? `${chatWidthPct}%` : "100%") : undefined }}
         >
           <ChatPanel
+            key={currentDrawingId}
             excalidrawApi={excalidrawApi}
             sceneStore={sceneStore}
             currentDrawingId={currentDrawingId}
@@ -159,6 +188,9 @@ export default function App() {
             settingsOpen={settingsOpen}
             onCloseSettings={() => setSettingsOpen(false)}
             onOpenSettings={() => setSettingsOpen(true)}
+            sidebarOpen={sidebarOpen}
+            onNewChat={handleNewChat}
+            onLoadDrawing={handleLoadDrawing}
           />
         </aside>
 

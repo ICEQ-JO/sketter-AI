@@ -10,10 +10,12 @@ import type { ToolName } from "@/lib/tools/schema";
 import { sanitizePlanToolCall } from "@/lib/tools/sanitize";
 import { getProvider, DEFAULT_PROVIDER_ID } from "@/lib/providers/registry";
 import { DEFAULT_MODE, MODE_STORAGE_KEY, type ChatMode } from "@/lib/chat/mode";
-import { pendingDrawingNameKey } from "@/lib/storage/drawings";
+import { listDrawings, pendingDrawingNameKey } from "@/lib/storage/drawings";
+import type { SavedDrawing } from "@/lib/storage/drawings";
 import type { ChatMessage, PlanData } from "@/components/chat/types";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
+import ChatSidebar from "@/components/chat/ChatSidebar";
 import EmptyState from "./EmptyState";
 import SettingsModal from "./SettingsModal";
 
@@ -36,6 +38,9 @@ interface ChatPanelProps {
   settingsOpen: boolean;
   onOpenSettings: () => void;
   onCloseSettings: () => void;
+  sidebarOpen: boolean;
+  onNewChat: () => void;
+  onLoadDrawing: (id: string) => void;
 }
 
 export default function ChatPanel({
@@ -46,6 +51,9 @@ export default function ChatPanel({
   settingsOpen,
   onOpenSettings,
   onCloseSettings,
+  sidebarOpen,
+  onNewChat,
+  onLoadDrawing,
 }: ChatPanelProps) {
   const [providerId, setProviderId] = useState(
     () => localStorage.getItem("sketter.providerId") ?? DEFAULT_PROVIDER_ID,
@@ -60,7 +68,18 @@ export default function ChatPanel({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [drawings, setDrawings] = useState<SavedDrawing[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    void listDrawings().then(setDrawings);
+  }, []);
+
+  useEffect(() => {
+    if (saveStatus === "saved") {
+      void listDrawings().then(setDrawings);
+    }
+  }, [saveStatus]);
 
   useEffect(() => {
     localStorage.setItem("sketter.providerId", providerId);
@@ -380,6 +399,8 @@ export default function ChatPanel({
 
   const provider = getProvider(providerId);
 
+  const isThinking = isStreaming && !messages.some((m) => m.id === "streaming-assistant");
+
   const settingsModal = (
     <SettingsModal
       open={settingsOpen}
@@ -396,59 +417,72 @@ export default function ChatPanel({
     />
   );
 
-  if (messages.length === 0) {
-    return (
-      <>
-        <EmptyState
-          onSubmit={(text) => void sendMessage(text)}
-          isStreaming={isStreaming}
-          onOpenSettings={onOpenSettings}
-          hasApiKey={!!apiKey}
-          mode={mode}
-          onModeChange={setMode}
-        />
-        {settingsModal}
-      </>
+  const mainContent =
+    messages.length === 0 ? (
+      <EmptyState
+        onSubmit={(text) => void sendMessage(text)}
+        isStreaming={isStreaming}
+        onOpenSettings={onOpenSettings}
+        hasApiKey={!!apiKey}
+        mode={mode}
+        onModeChange={setMode}
+      />
+    ) : (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2">
+          <span className="truncate text-xs text-muted">
+            {provider.label} · {model} · <span className="capitalize text-foreground">{mode}</span>
+          </span>
+          <span className="shrink-0 text-[10px] text-dim">
+            {saveStatus === "saving" ? "saving…" : saveStatus === "saved" ? "saved" : ""}
+          </span>
+        </div>
+
+        <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+          {messages.map((m) => (
+            <MessageBubble
+              key={m.id}
+              message={m}
+              onAnswerQuestion={handleAnswerQuestion}
+              onApprovePlan={handleApprovePlan}
+            />
+          ))}
+          {isThinking && (
+            <div className="flex max-w-[85%] items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground animate-pulse">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+              <span>{mode === "plan" ? "sketter is thinking…" : "sketter is drawing…"}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="shrink-0 border-t border-border p-3">
+          <ChatInput
+            value={input}
+            onChange={setInput}
+            onSubmit={(text) => {
+              setInput("");
+              void sendMessage(text);
+            }}
+            isStreaming={isStreaming}
+            mode={mode}
+            onModeChange={setMode}
+            rows={1}
+          />
+        </div>
+      </div>
     );
-  }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2">
-        <span className="truncate text-xs text-muted">
-          {provider.label} · {model} · <span className="capitalize text-foreground">{mode}</span>
-        </span>
-        <span className="shrink-0 text-[10px] text-dim">
-          {saveStatus === "saving" ? "saving…" : saveStatus === "saved" ? "saved" : ""}
-        </span>
-      </div>
-
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
-        {messages.map((m) => (
-          <MessageBubble
-            key={m.id}
-            message={m}
-            onAnswerQuestion={handleAnswerQuestion}
-            onApprovePlan={handleApprovePlan}
-          />
-        ))}
-      </div>
-
-      <div className="shrink-0 border-t border-border p-3">
-        <ChatInput
-          value={input}
-          onChange={setInput}
-          onSubmit={(text) => {
-            setInput("");
-            void sendMessage(text);
-          }}
-          isStreaming={isStreaming}
-          mode={mode}
-          onModeChange={setMode}
-          rows={1}
+    <div className="flex h-full min-h-0 overflow-hidden">
+      {sidebarOpen && (
+        <ChatSidebar
+          drawings={drawings}
+          currentDrawingId={currentDrawingId}
+          onNewChat={onNewChat}
+          onLoadDrawing={onLoadDrawing}
         />
-      </div>
-
+      )}
+      <div className="relative min-h-0 flex-1">{mainContent}</div>
       {settingsModal}
     </div>
   );
