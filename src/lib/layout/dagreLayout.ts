@@ -40,9 +40,33 @@ export interface LayoutResult {
   /** Edges that referenced a node id not present in `nodes` — skipped rather
    *  than thrown, since dagre.setEdge throws on unregistered endpoints. */
   skippedEdges: GraphLayoutEdge[];
+  /**
+   * Dagre's routed waypoints per edge, keyed by `${from}->${to}`. An edge
+   * that spans more than one rank (e.g. skipping over a sibling that sits
+   * between its endpoints) gets a dummy node at each intermediate rank —
+   * these points route around whatever else occupies that rank, instead of
+   * a naive straight line cutting straight through it.
+   */
+  edgeRoutes: Map<string, { x: number; y: number }[]>;
 }
 
 const CLUSTER_PREFIX = "__cluster_";
+
+/** Rough px-per-character estimate for edge label text at our default arrow-label font size. */
+const LABEL_CHAR_WIDTH = 7;
+const LABEL_HEIGHT = 24;
+
+/**
+ * Estimates an edge label's footprint so dagre reserves real space for it
+ * between ranks — dagre only avoids overlapping what it's told about, and
+ * an edge label with no width/height is invisible to its spacing math.
+ * Without this, labels routinely overlap neighboring boxes, arrows, and
+ * each other whenever ranksep/nodesep happen to be tight relative to the
+ * label text.
+ */
+function estimateLabelSize(label: string): { width: number; height: number } {
+  return { width: label.length * LABEL_CHAR_WIDTH + 12, height: LABEL_HEIGHT };
+}
 
 /**
  * Computes non-overlapping positions for a set of graph nodes using dagre —
@@ -58,9 +82,9 @@ export function layoutGraph(
   const g = new dagre.graphlib.Graph({ compound: true });
   g.setGraph({
     rankdir: options.rankdir ?? "TB",
-    nodesep: options.nodeSep ?? 60,
-    ranksep: options.rankSep ?? 100,
-    edgesep: options.edgeSep ?? 20,
+    nodesep: options.nodeSep ?? 90,
+    ranksep: options.rankSep ?? 140,
+    edgesep: options.edgeSep ?? 30,
   });
   g.setDefaultEdgeLabel(() => ({}));
 
@@ -84,7 +108,11 @@ export function layoutGraph(
       skippedEdges.push(edge);
       continue;
     }
-    g.setEdge(edge.from, edge.to, edge.label ? { label: edge.label } : {});
+    g.setEdge(
+      edge.from,
+      edge.to,
+      edge.label ? { label: edge.label, ...estimateLabelSize(edge.label) } : {},
+    );
   }
 
   dagre.layout(g);
@@ -113,5 +141,15 @@ export function layoutGraph(
       ? { x: anchorX, y: anchorY, width: 0, height: 0 }
       : { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 
-  return { positions, bbox, skippedEdges };
+  const edgeRoutes = new Map<string, { x: number; y: number }[]>();
+  for (const edge of edges) {
+    if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) continue;
+    const points: { x: number; y: number }[] = g.edge(edge.from, edge.to)?.points ?? [];
+    edgeRoutes.set(
+      `${edge.from}->${edge.to}`,
+      points.map((p) => ({ x: p.x + anchorX, y: p.y + anchorY })),
+    );
+  }
+
+  return { positions, bbox, skippedEdges, edgeRoutes };
 }

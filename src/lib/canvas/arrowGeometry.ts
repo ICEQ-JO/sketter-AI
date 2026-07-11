@@ -33,34 +33,54 @@ function rectExitPoint(rect: Rect, dx: number, dy: number): { x: number; y: numb
  * positions — that recompute normally only happens during interactive
  * dragging in the live app. Since we push scenes programmatically via
  * `updateScene`, we compute the visual line ourselves: from the edge of the
- * start box (along the line to the end box's center) to the edge of the end
- * box, with a small gap on each side.
+ * start box, through any interior waypoints, to the edge of the end box,
+ * with a small gap at each end.
+ *
+ * `waypoints` (optional) come from dagre's own edge routing — for an edge
+ * spanning more than one rank (e.g. skipping over a sibling that sits
+ * between its endpoints), dagre routes around whatever occupies the
+ * intermediate rank instead of a straight line cutting through it. Without
+ * them this always degrades gracefully to the old straight A-to-B line.
  */
-export function computeArrowGeometry(start: Rect, end: Rect): ArrowGeometry {
+export function computeArrowGeometry(
+  start: Rect,
+  end: Rect,
+  waypoints: { x: number; y: number }[] = [],
+): ArrowGeometry {
   const centerA = { x: start.x + start.width / 2, y: start.y + start.height / 2 };
   const centerB = { x: end.x + end.width / 2, y: end.y + end.height / 2 };
-  const dx = centerB.x - centerA.x;
-  const dy = centerB.y - centerA.y;
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len;
-  const uy = dy / len;
+  const firstTarget = waypoints[0] ?? centerB;
+  const lastSource = waypoints[waypoints.length - 1] ?? centerA;
 
-  const from = rectExitPoint(start, dx, dy);
-  const to = rectExitPoint(end, -dx, -dy);
+  const outDx = firstTarget.x - centerA.x;
+  const outDy = firstTarget.y - centerA.y;
+  const outLen = Math.hypot(outDx, outDy) || 1;
 
-  const startX = from.x + ux * GAP;
-  const startY = from.y + uy * GAP;
-  const endX = to.x - ux * GAP;
-  const endY = to.y - uy * GAP;
+  const inDx = lastSource.x - centerB.x;
+  const inDy = lastSource.y - centerB.y;
+  const inLen = Math.hypot(inDx, inDy) || 1;
+
+  const from = rectExitPoint(start, outDx, outDy);
+  const to = rectExitPoint(end, inDx, inDy);
+
+  const startX = from.x + (outDx / outLen) * GAP;
+  const startY = from.y + (outDy / outLen) * GAP;
+  const endX = to.x + (inDx / inLen) * GAP;
+  const endY = to.y + (inDy / inLen) * GAP;
+
+  const points: [number, number][] = [
+    [0, 0],
+    ...waypoints.map((p): [number, number] => [p.x - startX, p.y - startY]),
+    [endX - startX, endY - startY],
+  ];
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
 
   return {
     x: startX,
     y: startY,
-    points: [
-      [0, 0],
-      [endX - startX, endY - startY],
-    ],
-    width: Math.abs(endX - startX) || 1,
-    height: Math.abs(endY - startY) || 1,
+    points,
+    width: Math.max(...xs) - Math.min(...xs) || 1,
+    height: Math.max(...ys) - Math.min(...ys) || 1,
   };
 }

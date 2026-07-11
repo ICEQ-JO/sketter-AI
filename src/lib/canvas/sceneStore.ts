@@ -104,9 +104,13 @@ export class SceneStore {
       const end = byId.get(endId);
       if (!start || !end || !("width" in start) || !("width" in end)) continue;
 
+      const skeleton = this.skeletons.get(el.id) as Record<string, unknown> | undefined;
+      const waypoints = (skeleton?.routingPoints as { x: number; y: number }[] | undefined) ?? [];
+
       const geometry = computeArrowGeometry(
         { x: start.x, y: start.y, width: start.width, height: start.height },
         { x: end.x, y: end.y, width: end.width, height: end.height },
+        waypoints,
       );
       Object.assign(el as unknown as Record<string, unknown>, geometry);
     }
@@ -217,10 +221,16 @@ export class SceneStore {
     const liveById = new Map(live.map((el) => [el.id, el]));
 
     const internalEdges: GraphLayoutEdge[] = [];
+    const arrowIdByEdge = new Map<string, string>();
     let neighborAnchor: { x: number; y: number } | null = null;
 
-    for (const skeleton of this.skeletons.values()) {
-      const s = skeleton as unknown as { type?: string; start?: { id?: string }; end?: { id?: string } };
+    for (const [arrowId, skeleton] of this.skeletons) {
+      const s = skeleton as unknown as {
+        type?: string;
+        start?: { id?: string };
+        end?: { id?: string };
+        label?: { text?: string };
+      };
       if (s.type !== "arrow") continue;
       const from = s.start?.id;
       const to = s.end?.id;
@@ -228,7 +238,8 @@ export class SceneStore {
       const fromPending = pending.has(from);
       const toPending = pending.has(to);
       if (fromPending && toPending) {
-        internalEdges.push({ from, to });
+        internalEdges.push({ from, to, label: s.label?.text });
+        arrowIdByEdge.set(`${from}->${to}`, arrowId);
       } else if ((fromPending || toPending) && !neighborAnchor) {
         const externalId = fromPending ? to : from;
         const externalEl = liveById.get(externalId);
@@ -244,10 +255,23 @@ export class SceneStore {
         y: canvasSummary.suggestedFreeRegion.y,
       };
 
-    const { positions } = layoutGraph(nodes, internalEdges, {
+    const { positions, edgeRoutes } = layoutGraph(nodes, internalEdges, {
       anchorX: anchor.x,
       anchorY: anchor.y,
     });
+
+    for (const edge of internalEdges) {
+      const arrowId = arrowIdByEdge.get(`${edge.from}->${edge.to}`);
+      const arrowSkeleton = arrowId
+        ? (this.skeletons.get(arrowId) as Record<string, unknown> | undefined)
+        : undefined;
+      if (!arrowSkeleton) continue;
+      const route = edgeRoutes.get(`${edge.from}->${edge.to}`) ?? [];
+      // Endpoints come from dagre's approximate node-boundary crossing —
+      // drop them and keep only interior bends; the exact box-edge
+      // attachment point is recomputed precisely on every commit anyway.
+      arrowSkeleton.routingPoints = route.slice(1, -1);
+    }
 
     for (const [id, rect] of positions) {
       const skeleton = this.skeletons.get(id) as Record<string, unknown> | undefined;
