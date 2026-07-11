@@ -152,22 +152,17 @@ export default function ChatPanel({
 
   /** Builds an approved plan directly from its structure — no LLM round-trip to reinterpret prose. */
   async function executePlanDirectly(api: ExcalidrawImperativeAPI, plan: PlanData) {
+    sceneStore.beginTurn(api);
     const createdThisTurn = new Set<string>();
     for (const node of plan.nodes ?? []) {
-      await runBuildTool(
-        api,
-        "add_node",
-        { id: node.id, type: node.type, text: node.label, group: node.group },
-        createdThisTurn,
-      );
+      const args: Record<string, unknown> = { id: node.id, type: node.type, text: node.label };
+      if (node.group) args.group = node.group;
+      await runBuildTool(api, "add_node", args, createdThisTurn);
     }
     for (const edge of plan.edges ?? []) {
-      await runBuildTool(
-        api,
-        "connect",
-        { from: edge.from, to: edge.to, label: edge.label },
-        createdThisTurn,
-      );
+      const args: Record<string, unknown> = { from: edge.from, to: edge.to };
+      if (edge.label) args.label = edge.label;
+      await runBuildTool(api, "connect", args, createdThisTurn);
     }
 
     const canvasSummary = buildCanvasSummary(api.getSceneElements());
@@ -208,6 +203,9 @@ export default function ChatPanel({
       onOpenSettings();
       return;
     }
+
+    // Pull in any manual edits made since the last turn before mutating anything this turn.
+    sceneStore.beginTurn(excalidrawApi);
 
     const effectiveMode = modeOverride ?? mode;
     const isFirstMessage = messages.length === 0;

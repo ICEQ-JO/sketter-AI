@@ -8,6 +8,7 @@ import type {
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import { collectForeignElements, findDeadSkeletonIds, syncSkeletonsFromLive } from "./reconcile";
 import { layoutGraph, type GraphLayoutEdge, type GraphLayoutNode } from "../layout/dagreLayout";
+import { computeArrowGeometry } from "./arrowGeometry";
 import type { CanvasSummary } from "./summary";
 
 /**
@@ -18,10 +19,16 @@ import type { CanvasSummary } from "./summary";
  * separately since they arrive already fully formed.
  *
  * Skeletons are a *shadow* of live canvas state for AI-owned elements, not a
- * competing source of truth: every commit reconciles against the live scene
- * first (see reconcile.ts), so manual edits the user makes directly in
- * Excalidraw are never silently discarded, and hand-drawn/imported elements
- * are passed through untouched.
+ * competing source of truth: `beginTurn()` reconciles against the live scene
+ * once at the start of each user turn (see reconcile.ts), so manual edits
+ * the user makes directly in Excalidraw between turns are never silently
+ * discarded, and hand-drawn/imported elements are passed through untouched.
+ *
+ * Reconciliation deliberately does NOT run on every commit — only once per
+ * turn. If it ran on every commit, it would read the live scene from
+ * *before* that commit's own push and copy those stale values straight back
+ * over whatever this same call just computed (e.g. a freshly laid-out
+ * position), undoing every mutation before it ever reached the canvas.
  */
 export class SceneStore {
   private skeletons = new Map<string, ExcalidrawElementSkeleton>();
@@ -31,13 +38,13 @@ export class SceneStore {
   private pendingLayoutIds = new Set<string>();
   /** Group hint per node id, used by `runAutoLayout`; kept out of the skeleton itself so it never leaks into the compiled Excalidraw element. */
   private nodeGroups = new Map<string, string>();
+  /** Hand-drawn/imported elements owned by neither map, captured at the last `beginTurn()`; passed through `compile()` untouched. */
+  private foreignElements: ExcalidrawElement[] = [];
   /**
    * Ids (skeleton + mermaid) that have been successfully pushed to the live
-   * scene at least once. "Dead" pruning below only applies to ids in this
-   * set — otherwise a node added in *this* commit (not live yet, since
-   * reconcile() always reads live state from *before* the current push)
-   * would be indistinguishable from one the user just deleted by hand, and
-   * get wiped before it was ever rendered.
+   * scene at least once. "Dead" pruning in `beginTurn()` only applies to ids
+   * in this set — otherwise a node added but not yet pushed would be
+   * indistinguishable from one the user just deleted by hand.
    */
   private confirmedLiveIds = new Set<string>();
 
@@ -46,11 +53,12 @@ export class SceneStore {
   }
 
   /**
-   * Syncs skeleton geometry from live state, prunes ids the user deleted by
-   * hand, and returns elements owned by neither the skeleton map nor the
-   * mermaid list (hand-drawn/imported content) for pass-through.
+   * Call once at the start of processing a user turn, before any tool calls
+   * execute — pulls in live drift (manual edits made since the last turn)
+   * and prunes ids the user deleted by hand. Deliberately not called again
+   * mid-turn; see the class doc comment for why.
    */
-  private reconcile(api: ExcalidrawImperativeAPI): ExcalidrawElement[] {
+  beginTurn(api: ExcalidrawImperativeAPI): void {
     const live = api.getSceneElements();
     const liveIds = new Set(live.filter((el) => !el.isDeleted).map((el) => el.id));
 
@@ -67,24 +75,47 @@ export class SceneStore {
       (el) => !this.confirmedLiveIds.has(el.id) || liveIds.has(el.id),
     );
 
-    return collectForeignElements(
+    this.foreignElements = collectForeignElements(
       live,
       new Set(this.skeletons.keys()),
       new Set(this.mermaidElements.map((el) => el.id)),
     );
   }
 
-  private compile(api: ExcalidrawImperativeAPI): ExcalidrawElement[] {
-    const foreign = this.reconcile(api);
+  private compile(): ExcalidrawElement[] {
     const aiElements = convertToExcalidrawElements(
       Array.from(this.skeletons.values()),
       { regenerateIds: false },
     );
-    return [...aiElements, ...this.mermaidElements, ...foreign];
+    const all = [...aiElements, ...this.mermaidElements, ...this.foreignElements];
+    const byId = new Map(all.map((el) => [el.id, el]));
+
+    // convertToExcalidrawElements sets startBinding/endBinding correctly but
+    // doesn't recompute an arrow's actual points/x/y to match those elements'
+    // current positions — that only happens during interactive dragging in
+    // the live app. Since we push scenes programmatically, compute the
+    // visual line ourselves from the bound elements' real geometry.
+    for (const el of aiElements) {
+      if (el.type !== "arrow") continue;
+      const startId = el.startBinding?.elementId;
+      const endId = el.endBinding?.elementId;
+      if (!startId || !endId) continue;
+      const start = byId.get(startId);
+      const end = byId.get(endId);
+      if (!start || !end || !("width" in start) || !("width" in end)) continue;
+
+      const geometry = computeArrowGeometry(
+        { x: start.x, y: start.y, width: start.width, height: start.height },
+        { x: end.x, y: end.y, width: end.width, height: end.height },
+      );
+      Object.assign(el as unknown as Record<string, unknown>, geometry);
+    }
+
+    return all;
   }
 
   private commit(api: ExcalidrawImperativeAPI) {
-    api.updateScene({ elements: this.compile(api) });
+    api.updateScene({ elements: this.compile() });
     this.confirmedLiveIds = new Set([
       ...this.skeletons.keys(),
       ...this.mermaidElements.map((el) => el.id),
@@ -394,6 +425,7 @@ export class SceneStore {
     this.pendingLayoutIds.clear();
     this.nodeGroups.clear();
     this.confirmedLiveIds.clear();
+    this.foreignElements = [];
     api.resetScene();
   }
 }
