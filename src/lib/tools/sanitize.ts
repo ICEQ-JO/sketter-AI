@@ -3,6 +3,7 @@ import type { ToolCall, ToolName, PlanToolName } from "./schema";
 const MIN_COORD = -20000;
 const MAX_COORD = 20000;
 const SHAPE_TYPES = new Set(["rectangle", "ellipse", "diamond"]);
+const NODE_TYPES = new Set(["rectangle", "ellipse", "diamond", "text"]);
 const ELEMENT_TYPES = new Set([
   "rectangle",
   "ellipse",
@@ -42,7 +43,6 @@ export function sanitizeToolCall(
       if (!isNonEmptyString(a.id)) {
         return { ok: false, name: call.name, reason: "missing id" };
       }
-      const NODE_TYPES = new Set(["rectangle", "ellipse", "diamond", "text"]);
       if (!NODE_TYPES.has(a.type as string)) {
         return { ok: false, name: call.name, reason: `invalid type ${String(a.type)}` };
       }
@@ -105,6 +105,12 @@ export function sanitizeToolCall(
       const args: Record<string, unknown> = { id: a.id };
       if (typeof a.x === "number") args.x = clampNum(a.x, 0);
       if (typeof a.y === "number") args.y = clampNum(a.y, 0);
+      if (isNonEmptyString(a.type)) {
+        if (!NODE_TYPES.has(a.type)) {
+          return { ok: false, name: call.name, reason: `invalid type ${String(a.type)}` };
+        }
+        args.type = a.type;
+      }
       if (isNonEmptyString(a.text)) args.text = a.text;
       if (isNonEmptyString(a.strokeColor)) args.strokeColor = a.strokeColor;
       if (isNonEmptyString(a.backgroundColor)) args.backgroundColor = a.backgroundColor;
