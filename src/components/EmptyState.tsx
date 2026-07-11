@@ -2,12 +2,17 @@
 
 import { useState } from "react";
 import { SKETTER_BANNER } from "@/lib/ascii/banner";
+import AnimatedBackground from "@/components/AnimatedBackground";
+import ChatInput from "@/components/chat/ChatInput";
+import type { ChatMode } from "@/lib/chat/mode";
 
 interface EmptyStateProps {
   onSubmit: (text: string) => void;
   isStreaming: boolean;
   onOpenSettings: () => void;
   hasApiKey: boolean;
+  mode: ChatMode;
+  onModeChange: (mode: ChatMode) => void;
 }
 
 const QUICK_PROMPTS = [
@@ -22,26 +27,19 @@ export default function EmptyState({
   isStreaming,
   onOpenSettings,
   hasApiKey,
+  mode,
+  onModeChange,
 }: EmptyStateProps) {
   const [value, setValue] = useState("");
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!value.trim()) return;
-    onSubmit(value.trim());
+  function handleSubmit(text: string) {
+    onSubmit(text);
     setValue("");
   }
 
   return (
     <div className="grain fixed inset-0 z-40 flex flex-col items-center justify-center bg-background px-6">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(700px 420px at 50% 38%, rgba(255,138,61,0.08), transparent 60%)",
-        }}
-      />
+      <AnimatedBackground />
 
       <button
         type="button"
@@ -54,7 +52,7 @@ export default function EmptyState({
 
       <div className="relative z-10 flex w-full max-w-xl flex-col items-center">
         <pre
-          className="select-none whitespace-pre text-center text-[6px] leading-[7px] text-accent sm:text-[9px] sm:leading-[10px]"
+          className="select-none whitespace-pre text-center text-[5px] leading-[6px] text-accent sm:text-[8px] sm:leading-[9px]"
           style={{ animation: "fade-up 0.6s ease-out both" }}
           aria-label="Sketter"
         >
@@ -67,35 +65,17 @@ export default function EmptyState({
           chat to draw. iterate live.
         </p>
 
-        <form
-          onSubmit={handleSubmit}
-          className="mt-8 w-full rounded-xl border border-border bg-white/[0.02] p-3 shadow-lg"
-          style={{ animation: "fade-up 0.6s ease-out 0.2s both" }}
-        >
-          <textarea
+        <div className="mt-8 w-full" style={{ animation: "fade-up 0.6s ease-out 0.2s both" }}>
+          <ChatInput
             value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit(e);
-              }
-            }}
+            onChange={setValue}
+            onSubmit={handleSubmit}
+            isStreaming={isStreaming}
+            mode={mode}
+            onModeChange={onModeChange}
             placeholder="Describe the diagram you want to draw…"
-            rows={2}
-            disabled={isStreaming}
-            className="w-full resize-none bg-transparent text-sm text-foreground outline-none placeholder:text-dim disabled:opacity-50"
           />
-          <div className="mt-2 flex items-center justify-end">
-            <button
-              type="submit"
-              disabled={isStreaming || !value.trim()}
-              className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-background disabled:opacity-40"
-            >
-              {isStreaming ? "drawing…" : "send"}
-            </button>
-          </div>
-        </form>
+        </div>
 
         <div
           className="mt-4 flex flex-wrap justify-center gap-2"
