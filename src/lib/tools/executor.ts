@@ -19,7 +19,7 @@ export async function executeToolCall(
   name: ToolName,
   rawArgs: Record<string, unknown>,
 ): Promise<ExecutionResult> {
-  const sanitized = sanitizeToolCall({ name, arguments: rawArgs }, store.validIds());
+  const sanitized = sanitizeToolCall({ name, arguments: rawArgs }, store.validIds(api));
   if (!sanitized.ok) {
     console.warn(`[executor] rejected ${name}:`, sanitized.reason);
     return { name, ok: false, reason: sanitized.reason };

@@ -6,6 +6,7 @@ import type {
   ExcalidrawImperativeAPI,
 } from "@excalidraw/excalidraw/types";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
+import { collectForeignElements, findDeadSkeletonIds, syncSkeletonsFromLive } from "./reconcile";
 
 /**
  * Holds the AI-authored elements as skeleton definitions keyed by our own
@@ -13,6 +14,12 @@ import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
  * re-converts, which is what lets `connect` bind arrows by id and later
  * turns reference the same id again). Mermaid-imported elements are stored
  * separately since they arrive already fully formed.
+ *
+ * Skeletons are a *shadow* of live canvas state for AI-owned elements, not a
+ * competing source of truth: every commit reconciles against the live scene
+ * first (see reconcile.ts), so manual edits the user makes directly in
+ * Excalidraw are never silently discarded, and hand-drawn/imported elements
+ * are passed through untouched.
  */
 export class SceneStore {
   private skeletons = new Map<string, ExcalidrawElementSkeleton>();
@@ -23,16 +30,39 @@ export class SceneStore {
     return this.skeletons.has(id);
   }
 
-  private compile(): ExcalidrawElement[] {
+  /**
+   * Syncs skeleton geometry from live state, prunes ids the user deleted by
+   * hand, and returns elements owned by neither the skeleton map nor the
+   * mermaid list (hand-drawn/imported content) for pass-through.
+   */
+  private reconcile(api: ExcalidrawImperativeAPI): ExcalidrawElement[] {
+    const live = api.getSceneElements();
+
+    syncSkeletonsFromLive(this.skeletons, live);
+    for (const id of findDeadSkeletonIds(this.skeletons, live)) {
+      this.skeletons.delete(id);
+    }
+    const liveIds = new Set(live.filter((el) => !el.isDeleted).map((el) => el.id));
+    this.mermaidElements = this.mermaidElements.filter((el) => liveIds.has(el.id));
+
+    return collectForeignElements(
+      live,
+      new Set(this.skeletons.keys()),
+      new Set(this.mermaidElements.map((el) => el.id)),
+    );
+  }
+
+  private compile(api: ExcalidrawImperativeAPI): ExcalidrawElement[] {
+    const foreign = this.reconcile(api);
     const aiElements = convertToExcalidrawElements(
       Array.from(this.skeletons.values()),
       { regenerateIds: false },
     );
-    return [...aiElements, ...this.mermaidElements];
+    return [...aiElements, ...this.mermaidElements, ...foreign];
   }
 
   private commit(api: ExcalidrawImperativeAPI) {
-    api.updateScene({ elements: this.compile() });
+    api.updateScene({ elements: this.compile(api) });
   }
 
   createElement(api: ExcalidrawImperativeAPI, args: Record<string, unknown>) {
@@ -106,6 +136,12 @@ export class SceneStore {
     this.commit(api);
   }
 
+  /**
+   * Resolves an anchor/target id against the reconciled skeleton map first,
+   * falling back to a live-scene lookup for anything not AI-owned (mermaid
+   * imports, hand-drawn shapes) — so "position relative to X" works against
+   * literally anything on the canvas, not just AI-created elements.
+   */
   moveRelative(api: ExcalidrawImperativeAPI, args: Record<string, unknown>) {
     const { id, relative_to, position, gap } = args as {
       id: string;
@@ -113,14 +149,21 @@ export class SceneStore {
       position: "above" | "below" | "left" | "right";
       gap: number;
     };
-    const target = this.skeletons.get(id) as Record<string, unknown> | undefined;
-    const anchor = this.skeletons.get(relative_to) as Record<string, unknown> | undefined;
-    if (!target || !anchor) return;
 
-    const anchorX = Number(anchor.x ?? 0);
-    const anchorY = Number(anchor.y ?? 0);
-    const anchorW = Number(anchor.width ?? 120);
-    const anchorH = Number(anchor.height ?? 80);
+    const target = this.skeletons.get(id) as Record<string, unknown> | undefined;
+    if (!target) return; // can only move an AI-owned element; SceneStore doesn't mutate foreign geometry.
+
+    const live = api.getSceneElements();
+    const liveById = new Map(live.filter((el) => !el.isDeleted).map((el) => [el.id, el]));
+
+    const anchorSkeleton = this.skeletons.get(relative_to) as Record<string, unknown> | undefined;
+    const anchorLive = anchorSkeleton ? undefined : liveById.get(relative_to);
+    if (!anchorSkeleton && !anchorLive) return;
+
+    const anchorX = Number(anchorSkeleton?.x ?? anchorLive?.x ?? 0);
+    const anchorY = Number(anchorSkeleton?.y ?? anchorLive?.y ?? 0);
+    const anchorW = Number(anchorSkeleton?.width ?? anchorLive?.width ?? 120);
+    const anchorH = Number(anchorSkeleton?.height ?? anchorLive?.height ?? 80);
     const targetW = Number(target.width ?? 120);
     const targetH = Number(target.height ?? 80);
 
@@ -192,10 +235,18 @@ export class SceneStore {
     this.commit(api);
   }
 
-  /** ids currently addressable by the model: AI-created ids plus imported mermaid element ids. */
-  validIds(): Set<string> {
+  /**
+   * Ids currently addressable by the model: AI-created ids, imported mermaid
+   * element ids, and anything else currently live on the canvas (hand-drawn
+   * shapes) — `relative_to`/`connect` should resolve against anything on
+   * screen, not just AI-owned elements.
+   */
+  validIds(api: ExcalidrawImperativeAPI): Set<string> {
     const ids = new Set(this.skeletons.keys());
     for (const el of this.mermaidElements) ids.add(el.id);
+    for (const el of api.getSceneElements()) {
+      if (!el.isDeleted) ids.add(el.id);
+    }
     return ids;
   }
 
