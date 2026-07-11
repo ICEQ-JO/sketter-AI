@@ -286,6 +286,16 @@ export class SceneStore {
     this.commit(api);
   }
 
+  /** Overrides an AI-owned arrow's interior bend points (absolute coords),
+   *  e.g. to route it around a box its straight line would otherwise cross —
+   *  see verify.ts's arrow_crosses_element check. */
+  setArrowRoute(api: ExcalidrawImperativeAPI, arrowId: string, waypoints: { x: number; y: number }[]) {
+    const skeleton = this.skeletons.get(arrowId) as Record<string, unknown> | undefined;
+    if (!skeleton || skeleton.type !== "arrow") return;
+    skeleton.routingPoints = waypoints;
+    this.commit(api);
+  }
+
   connect(api: ExcalidrawImperativeAPI, args: Record<string, unknown>) {
     const { from, to, label } = args as { from: string; to: string; label?: string };
     const arrowId = `arrow-${from}-${to}-${Date.now().toString(36)}`;

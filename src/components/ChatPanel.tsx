@@ -147,12 +147,37 @@ export default function ChatPanel({
     return id;
   }
 
+  /** Every element id a successful tool call touched — used to focus the camera
+   *  and highlight what the AI just did, independent of `createdThisTurn` (which
+   *  verify.ts needs scoped to newly-created ids specifically). */
+  function affectedIds(name: string, args: Record<string, unknown>): string[] {
+    switch (name) {
+      case "add_node":
+      case "add_freeform":
+      case "update_element":
+      case "move_relative":
+        return typeof args.id === "string" ? [args.id] : [];
+      case "connect": {
+        const ids: string[] = [];
+        if (typeof args.from === "string") ids.push(args.from);
+        if (typeof args.to === "string") ids.push(args.to);
+        return ids;
+      }
+      case "group":
+      case "align":
+        return Array.isArray(args.ids) ? args.ids.filter((x): x is string => typeof x === "string") : [];
+      default:
+        return [];
+    }
+  }
+
   /** Applies a single already-parsed build tool call — shared by streamed calls and the direct plan-approval path. Returns the execution result so the agentic loop can report it back to the model. */
   async function runBuildTool(
     api: ExcalidrawImperativeAPI,
     name: string,
     args: Record<string, unknown>,
     createdThisTurn: Set<string>,
+    touchedThisTurn?: Set<string>,
   ): Promise<ExecutionResult> {
     const activityId = addMessage(
       "tool-activity",
@@ -167,6 +192,13 @@ export default function ChatPanel({
     if ((name === "add_node" || name === "add_freeform") && typeof args.id === "string") {
       createdThisTurn.add(args.id);
     }
+    if (touchedThisTurn) {
+      if (name === "delete_element" && typeof args.id === "string") {
+        touchedThisTurn.delete(args.id);
+      } else {
+        for (const id of affectedIds(name, args)) touchedThisTurn.add(id);
+      }
+    }
     return result;
   }
 
@@ -174,6 +206,7 @@ export default function ChatPanel({
     api: ExcalidrawImperativeAPI,
     tc: StreamingToolCall,
     createdThisTurn: Set<string>,
+    touchedThisTurn?: Set<string>,
   ): Promise<ExecutionResult> {
     let args: Record<string, unknown> = {};
     try {
@@ -182,7 +215,27 @@ export default function ChatPanel({
       addMessage("system-note", `Model produced malformed arguments for ${tc.name}, skipped.`);
       return { name: tc.name as ToolName, ok: false, reason: "malformed arguments (invalid JSON)" };
     }
-    return runBuildTool(api, tc.name, args, createdThisTurn);
+    return runBuildTool(api, tc.name, args, createdThisTurn, touchedThisTurn);
+  }
+
+  /**
+   * Pans/zooms the canvas to frame what the AI just drew or changed, and
+   * briefly selects those elements so they're visually obvious — an explicit
+   * "here's where I worked" signal, since new content can otherwise land
+   * anywhere on a large canvas with no indication of where to look.
+   */
+  function focusOnElements(api: ExcalidrawImperativeAPI, ids: Set<string>) {
+    if (ids.size === 0) return;
+    const live = api.getSceneElements().filter((el) => !el.isDeleted && ids.has(el.id));
+    if (live.length === 0) return;
+
+    api.scrollToContent(live, { fitToContent: true, animate: true, maxZoom: 1 });
+    api.updateScene({
+      appState: { selectedElementIds: Object.fromEntries(live.map((el) => [el.id, true])) },
+    });
+    setTimeout(() => {
+      api.updateScene({ appState: { selectedElementIds: {} } });
+    }, 2200);
   }
 
   /** Returns true if it actually rendered a question/plan message, so callers can tell a real render apart from a skipped/malformed call. */
@@ -222,15 +275,16 @@ export default function ChatPanel({
   async function executePlanDirectly(api: ExcalidrawImperativeAPI, plan: PlanData) {
     sceneStore.beginTurn(api);
     const createdThisTurn = new Set<string>();
+    const touchedThisTurn = new Set<string>();
     for (const node of plan.nodes ?? []) {
       const args: Record<string, unknown> = { id: node.id, type: node.type, text: node.label };
       if (node.group) args.group = node.group;
-      await runBuildTool(api, "add_node", args, createdThisTurn);
+      await runBuildTool(api, "add_node", args, createdThisTurn, touchedThisTurn);
     }
     for (const edge of plan.edges ?? []) {
       const args: Record<string, unknown> = { from: edge.from, to: edge.to };
       if (edge.label) args.label = edge.label;
-      await runBuildTool(api, "connect", args, createdThisTurn);
+      await runBuildTool(api, "connect", args, createdThisTurn, touchedThisTurn);
     }
 
     const canvasSummary = buildCanvasSummary(api.getSceneElements());
@@ -241,6 +295,7 @@ export default function ChatPanel({
       addMessage("tool-activity", `auto-adjusted ${verifyResult.fixedCount} geometry issue(s)`);
     }
     addMessage("system-note", "Plan built.");
+    focusOnElements(api, touchedThisTurn);
   }
 
   function handleAnswerQuestion(id: string, answer: string) {
@@ -266,7 +321,10 @@ export default function ChatPanel({
     setMessages((prev) =>
       prev.map((m) => (m.id === id ? { ...m, plan: { ...m.plan, approved: false } } : m)),
     );
-    void sendMessage("keep refining", "plan");
+    // Force ask_question rather than trusting the model to honor the "don't
+    // re-propose" instruction on its own — small/fast models routinely ignore
+    // it and just re-emit a near-identical plan instead of asking anything.
+    void sendMessage("keep refining", "plan", "ask_question");
   }
 
   /**
@@ -281,11 +339,19 @@ export default function ChatPanel({
     canvasSummary: CanvasSummary,
     effectiveMode: ChatMode,
     onToolComplete: (tc: StreamingToolCall) => Promise<void>,
+    forceTool?: string,
   ): Promise<{ assistantText: string; toolCalls: StreamingToolCall[]; finishReason: string | null } | null> {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apiKey, model, messages: apiMessages, canvasSummary, mode: effectiveMode }),
+      body: JSON.stringify({
+        apiKey,
+        model,
+        messages: apiMessages,
+        canvasSummary,
+        mode: effectiveMode,
+        ...(forceTool ? { forceTool } : {}),
+      }),
     });
 
     if (!res.ok || !res.body) {
@@ -405,6 +471,7 @@ export default function ChatPanel({
    */
   async function runBuildLoop(api: ExcalidrawImperativeAPI, history: ApiMessage[]) {
     const apiMessages = [...history];
+    const touchedThisRequest = new Set<string>();
 
     for (let step = 0; step < MAX_AGENT_STEPS; step++) {
       const canvasSummary = buildCanvasSummary(api.getSceneElements());
@@ -412,25 +479,30 @@ export default function ChatPanel({
       const results = new Map<StreamingToolCall, ExecutionResult>();
 
       const turn = await streamTurn(apiMessages, canvasSummary, "build", async (tc) => {
-        results.set(tc, await runBuildToolCall(api, tc, stepCreated));
+        results.set(tc, await runBuildToolCall(api, tc, stepCreated, touchedThisRequest));
       });
       if (!turn) return;
 
       // No tool calls means the model chose to just talk — it's done.
-      if (turn.toolCalls.length === 0) return;
+      if (turn.toolCalls.length === 0) {
+        focusOnElements(api, touchedThisRequest);
+        return;
+      }
 
       // Lay out this step's new nodes, then verify the resulting geometry.
+      // Always verify, even when a step only called `connect` on existing
+      // nodes (no new ids in stepCreated) — that's exactly the case where a
+      // freshly wired arrow can cut straight through an unrelated box, since
+      // it's the most likely moment to introduce that specific issue.
       sceneStore.runAutoLayout(api, canvasSummary);
       let verifyNote = "";
-      if (stepCreated.size > 0) {
-        const verifyResult = verifyAndFix(api, sceneStore, stepCreated);
-        if (verifyResult.fixedCount > 0) {
-          addMessage("tool-activity", `auto-adjusted ${verifyResult.fixedCount} geometry issue(s)`);
-        }
-        const unresolved = verifyResult.issues.filter((i) => !i.autoFixed);
-        if (unresolved.length > 0) {
-          verifyNote = ["Geometry issues remain after auto-layout:", ...unresolved.map((i) => `- ${i.detail}`)].join("\n");
-        }
+      const verifyResult = verifyAndFix(api, sceneStore, stepCreated);
+      if (verifyResult.fixedCount > 0) {
+        addMessage("tool-activity", `auto-adjusted ${verifyResult.fixedCount} geometry issue(s)`);
+      }
+      const unresolved = verifyResult.issues.filter((i) => !i.autoFixed);
+      if (unresolved.length > 0) {
+        verifyNote = ["Geometry issues remain after auto-layout:", ...unresolved.map((i) => `- ${i.detail}`)].join("\n");
       }
 
       // Feed the model its own assistant turn plus a result for every tool call,
@@ -470,11 +542,12 @@ export default function ChatPanel({
 
       if (step === MAX_AGENT_STEPS - 1) {
         addMessage("system-note", "Reached the step limit for this request — send another message to continue.");
+        focusOnElements(api, touchedThisRequest);
       }
     }
   }
 
-  async function sendMessage(userText: string, modeOverride?: ChatMode) {
+  async function sendMessage(userText: string, modeOverride?: ChatMode, forceTool?: string) {
     if (!userText.trim() || isStreaming) return;
     if (!excalidrawApi) return;
 
@@ -518,10 +591,16 @@ export default function ChatPanel({
         // only the first should reach the UI.
         let planToolCalledThisTurn = false;
         const canvasSummary = buildCanvasSummary(excalidrawApi.getSceneElements());
-        await streamTurn(history, canvasSummary, "plan", async (tc) => {
-          if (planToolCalledThisTurn) return;
-          if (runPlanToolCall(tc)) planToolCalledThisTurn = true;
-        });
+        await streamTurn(
+          history,
+          canvasSummary,
+          "plan",
+          async (tc) => {
+            if (planToolCalledThisTurn) return;
+            if (runPlanToolCall(tc)) planToolCalledThisTurn = true;
+          },
+          forceTool,
+        );
       }
     } catch (err) {
       addMessage("system-note", `Request failed: ${(err as Error).message}`);

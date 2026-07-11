@@ -24,6 +24,10 @@ interface ChatRequestBody {
   messages: ApiMessage[];
   canvasSummary: CanvasSummary;
   mode: ChatMode;
+  /** Forces the model to call this exact tool this turn instead of leaving it
+   *  optional — used e.g. after "keep refining" so a model that ignores the
+   *  "don't re-propose" instruction structurally can't call propose_plan again. */
+  forceTool?: string;
 }
 
 const AGENT_IDENTITY =
@@ -88,8 +92,11 @@ function systemPrompt(canvasSummary: CanvasSummary, mode: ChatMode): string {
 
 export async function POST(req: Request) {
   const body = (await req.json()) as ChatRequestBody;
-  const { apiKey, model, messages, canvasSummary, mode } = body;
+  const { apiKey, model, messages, canvasSummary, mode, forceTool } = body;
   const effectiveMode: ChatMode = mode === "plan" ? "plan" : "build";
+  const toolChoice = forceTool
+    ? { type: "function" as const, function: { name: forceTool } }
+    : "auto";
 
   if (!apiKey) {
     return new Response(JSON.stringify({ error: "Missing API key" }), { status: 401 });
@@ -110,7 +117,7 @@ export async function POST(req: Request) {
       model,
       stream: true,
       tools: effectiveMode === "build" ? TOOL_SCHEMA : PLAN_TOOL_SCHEMA,
-      tool_choice: "auto",
+      tool_choice: toolChoice,
       messages: [
         { role: "system", content: systemPrompt(canvasSummary, effectiveMode) },
         ...messages,
