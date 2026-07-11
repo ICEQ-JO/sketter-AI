@@ -19,15 +19,18 @@ export async function executeToolCall(
   name: ToolName,
   rawArgs: Record<string, unknown>,
 ): Promise<ExecutionResult> {
-  const sanitized = sanitizeToolCall({ name, arguments: rawArgs }, store.validIds());
+  const sanitized = sanitizeToolCall({ name, arguments: rawArgs }, store.validIds(api));
   if (!sanitized.ok) {
     console.warn(`[executor] rejected ${name}:`, sanitized.reason);
     return { name, ok: false, reason: sanitized.reason };
   }
 
   switch (sanitized.name) {
-    case "create_element":
-      store.createElement(api, sanitized.args);
+    case "add_node":
+      store.addNode(api, sanitized.args);
+      break;
+    case "add_freeform":
+      store.addFreeform(api, sanitized.args);
       break;
     case "connect":
       store.connect(api, sanitized.args);
