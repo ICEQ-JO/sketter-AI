@@ -55,7 +55,10 @@ function pickAppState(appState: AppState): Partial<AppState> {
 
 export async function listDrawings(): Promise<SavedDrawing[]> {
   const all = await entries<string, SavedDrawing>(drawingsStore);
-  return all.map(([, value]) => value).sort((a, b) => b.updatedAt - a.updatedAt);
+  return all
+    .map(([, value]) => value)
+    .filter((d) => d && typeof d.id === "string" && d.id.length > 0)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function loadDrawing(id: string): Promise<SavedDrawing | undefined> {
