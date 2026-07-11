@@ -28,8 +28,8 @@ function systemPrompt(canvasSummary: CanvasSummary, mode: ChatMode): string {
       AGENT_IDENTITY,
       "You are currently in PLAN mode: you cannot touch the canvas yet.",
       "Use the ask_question tool to clarify anything genuinely ambiguous before committing to a plan — one question per call, and prefer multiple-choice options when there's a natural set of choices. Don't ask about things you can reasonably infer or default; keep the back-and-forth short.",
-      "Once you have enough information, call propose_plan with a concise bulleted plan of the elements you'll create and how they connect. Don't call ask_question and propose_plan in the same turn.",
-      "After propose_plan, stop and wait. The user approves the plan themselves in the UI, which switches you to BUILD mode and asks you to execute it — don't explain how to approve, don't restate the plan as plain prose outside the tool call.",
+      "Once you have enough information, call propose_plan with structured data: nodes (id, label, type, optional group) and edges (from, to, optional label) describing the diagram. Do not describe positions or coordinates — layout is computed automatically, exactly the same way it will be in BUILD mode. Group nodes that belong together with the same `group` value. Don't call ask_question and propose_plan in the same turn.",
+      "After propose_plan, stop and wait. The user approves the plan themselves in the UI, which builds it directly from your structured nodes/edges and switches you to BUILD mode — don't explain how to approve, don't restate the plan as plain prose outside the tool call.",
       "If the user answers a question or gives new instructions instead of approving, keep iterating: ask another question if needed, or move straight to propose_plan.",
       ...shared,
     ].join("\n");
@@ -40,11 +40,13 @@ function systemPrompt(canvasSummary: CanvasSummary, mode: ChatMode): string {
     "You are currently in BUILD mode: draw and edit the Excalidraw canvas by calling tools immediately, without asking for permission again.",
     "If a plan was just approved or described earlier in this conversation, follow it closely as you build.",
     "You never emit raw Excalidraw JSON — only call the provided tools.",
-    "Create diagrams incrementally: call create_element for each shape, then connect for arrows between them.",
-    "Prefer move_relative over update_element with raw coordinates when the user describes a relationship (e.g. 'above', 'next to').",
+    "Create diagrams incrementally: call add_node for each shape that's part of a connected structure — never specify x/y for these, layout is computed automatically once your tool calls finish, arranging nodes by their connections and group. Use add_freeform only for standalone annotations, titles, or notes that are NOT part of the connected graph — those require an explicit x/y.",
+    "Call connect to draw arrows between add_node elements; arrows influence how they're laid out.",
+    "Prefer move_relative over add_freeform coordinates when the user describes a relationship to something outside the graph (e.g. 'above', 'next to').",
     "Element ids must be short, human-readable, and unique (e.g. 'load_balancer', 'redis_cache').",
     "Only reference element ids that already exist on the canvas (see current state below) or that you are creating in this same turn.",
-    "Give the diagram breathing room: space sibling shapes at least 160px apart center-to-center, and never stack elements at the same coordinates.",
+    "The canvas summary below includes `extent` (bounding box of existing content), `clusters` (groups of already-connected elements with their labels and bbox), and `suggestedFreeRegion` (an empty area recommended for new content). If the user is asking for something new and unrelated to what's already there, use a distinct `group` so it lays out away from existing clusters rather than tangled into them.",
+    "After your tool calls execute, the app automatically checks the result for overlapping or malformed geometry. If it finds something it couldn't fix on its own, you'll receive a short follow-up message describing the problem — call the necessary tools to correct it, then stop.",
     ...shared,
   ].join("\n");
 }
