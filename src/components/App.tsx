@@ -7,7 +7,7 @@ import ExcalidrawCanvas from "@/components/ExcalidrawCanvas";
 import ChatPanel from "@/components/ChatPanel";
 import AppHeader from "@/components/AppHeader";
 import { SceneStore } from "@/lib/canvas/sceneStore";
-import { loadDrawing, pendingDrawingNameKey, saveDrawing } from "@/lib/storage/drawings";
+import { loadDrawing, newDrawingId, pendingDrawingNameKey, saveDrawing } from "@/lib/storage/drawings";
 
 const CURRENT_DRAWING_STORAGE_KEY = "sketter.currentDrawingId";
 const CHAT_WIDTH_STORAGE_KEY = "sketter.chatWidthPct";
@@ -15,12 +15,6 @@ const AUTOSAVE_DEBOUNCE_MS = 1500;
 const MIN_PANEL_PCT = 20;
 const MAX_PANEL_PCT = 80;
 const DEFAULT_CHAT_WIDTH_PCT = 50;
-
-function newDrawingId(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `drawing-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-}
 
 export default function App() {
   const searchParams = useSearchParams();

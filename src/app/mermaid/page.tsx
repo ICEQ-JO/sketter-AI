@@ -1,10 +1,5 @@
-import ComingSoon from "@/components/ComingSoon";
+import MermaidStudio from "@/components/MermaidStudio";
 
 export default function MermaidPage() {
-  return (
-    <ComingSoon
-      title="mermaid → canvas"
-      description="paste mermaid syntax, get a live excalidraw canvas back. import/export is coming to sketter ai directly."
-    />
-  );
+  return <MermaidStudio />;
 }

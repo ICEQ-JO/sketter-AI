@@ -17,6 +17,12 @@ export interface SavedDrawing {
 
 const drawingsStore = createStore("sketter-drawings", "drawings");
 
+export function newDrawingId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `drawing-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 /** localStorage key used to hand a proposed name from the chat to the autosave writer. */
 export function pendingDrawingNameKey(drawingId: string): string {
   return `sketter.pendingName.${drawingId}`;
