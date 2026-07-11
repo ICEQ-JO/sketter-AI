@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { SceneStore } from "@/lib/canvas/sceneStore";
 import { buildCanvasSummary } from "@/lib/canvas/summary";
+import { verifyAndFix } from "@/lib/canvas/verify";
 import { executeToolCall } from "@/lib/tools/executor";
 import type { ToolName } from "@/lib/tools/schema";
 import { getProvider, DEFAULT_PROVIDER_ID } from "@/lib/providers/registry";
@@ -22,6 +23,9 @@ interface StreamingToolCall {
   arguments: string;
   executed: boolean;
 }
+
+/** Max corrective round-trips after a build turn if verification finds unresolved issues. */
+const MAX_VERIFY_RETRIES = 2;
 
 interface ChatPanelProps {
   excalidrawApi: ExcalidrawImperativeAPI | null;
@@ -83,7 +87,11 @@ export default function ChatPanel({
     return id;
   }
 
-  async function runBuildToolCall(api: ExcalidrawImperativeAPI, tc: StreamingToolCall) {
+  async function runBuildToolCall(
+    api: ExcalidrawImperativeAPI,
+    tc: StreamingToolCall,
+    createdThisTurn: Set<string>,
+  ) {
     let args: Record<string, unknown> = {};
     try {
       args = tc.arguments ? JSON.parse(tc.arguments) : {};
@@ -99,6 +107,10 @@ export default function ChatPanel({
     if (!result.ok) {
       setMessages((prev) => prev.filter((m) => m.id !== activityId));
       addMessage("system-note", `Skipped ${tc.name}: ${result.reason}`);
+      return;
+    }
+    if ((tc.name === "add_node" || tc.name === "add_freeform") && typeof args.id === "string") {
+      createdThisTurn.add(args.id);
     }
   }
 
@@ -136,8 +148,8 @@ export default function ChatPanel({
     void sendMessage("Proceed and build the plan above exactly as described.", "build");
   }
 
-  async function sendMessage(userText: string, modeOverride?: ChatMode) {
-    if (!userText.trim() || isStreaming) return;
+  async function sendMessage(userText: string, modeOverride?: ChatMode, retryDepth = 0) {
+    if (!userText.trim() || (isStreaming && retryDepth === 0)) return;
     if (!excalidrawApi) return;
 
     if (!apiKey) {
@@ -169,11 +181,12 @@ export default function ChatPanel({
     let assistantText = "";
     const toolCalls = new Map<number, StreamingToolCall>();
     let lastIndex = -1;
+    const createdThisTurn = new Set<string>();
 
     async function handleCompletedToolCall(tc: StreamingToolCall) {
       if (effectiveMode === "build") {
         if (!excalidrawApi) return;
-        await runBuildToolCall(excalidrawApi, tc);
+        await runBuildToolCall(excalidrawApi, tc, createdThisTurn);
       } else {
         runPlanToolCall(tc);
       }
@@ -283,6 +296,32 @@ export default function ChatPanel({
       setMessages((prev) =>
         prev.map((m) => (m.id === "streaming-assistant" ? { ...m, id: crypto.randomUUID() } : m)),
       );
+
+      if (effectiveMode === "build" && excalidrawApi && createdThisTurn.size > 0) {
+        const verifyResult = verifyAndFix(excalidrawApi, sceneStore, createdThisTurn);
+        const unresolved = verifyResult.issues.filter((i) => !i.autoFixed);
+        if (verifyResult.fixedCount > 0) {
+          addMessage(
+            "tool-activity",
+            `auto-adjusted ${verifyResult.fixedCount} geometry issue(s)`,
+          );
+        }
+        if (unresolved.length > 0) {
+          if (retryDepth < MAX_VERIFY_RETRIES) {
+            const correctiveText = [
+              "The diagram has issues you should fix:",
+              ...unresolved.map((i) => `- ${i.detail}`),
+              "Call the appropriate tools to correct these, then stop.",
+            ].join("\n");
+            await sendMessage(correctiveText, "build", retryDepth + 1);
+          } else {
+            addMessage(
+              "system-note",
+              `Diagram has ${unresolved.length} unresolved issue(s) after automatic correction attempts — you may want to describe what to fix.`,
+            );
+          }
+        }
+      }
     } catch (err) {
       addMessage("system-note", `Request failed: ${(err as Error).message}`);
     } finally {
