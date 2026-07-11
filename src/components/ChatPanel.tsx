@@ -447,7 +447,7 @@ export default function ChatPanel({
           </span>
         </div>
 
-        <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+        <div ref={scrollRef} className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
           {messages.map((m) => (
             <MessageBubble
               key={m.id}
@@ -457,9 +457,12 @@ export default function ChatPanel({
             />
           ))}
           {isThinking && (
-            <div className="flex max-w-[85%] items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground animate-pulse">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
-              <span>{mode === "plan" ? "sketter is thinking…" : "sketter is drawing…"}</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-wide text-dim">sketter</span>
+              <div className="flex max-w-[85%] items-center gap-2 rounded-2xl rounded-tl-md border border-border bg-surface px-5 py-3 text-sm text-foreground animate-pulse">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+                <span>{mode === "plan" ? "thinking…" : "drawing…"}</span>
+              </div>
             </div>
           )}
         </div>
