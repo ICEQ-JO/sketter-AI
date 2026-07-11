@@ -164,20 +164,21 @@ export default function ChatPanel({
     await runBuildTool(api, tc.name, args, createdThisTurn);
   }
 
-  function runPlanToolCall(tc: StreamingToolCall) {
+  /** Returns true if it actually rendered a question/plan message, so callers can tell a real render apart from a skipped/malformed call. */
+  function runPlanToolCall(tc: StreamingToolCall): boolean {
     let args: Record<string, unknown> = {};
     try {
       args = tc.arguments ? JSON.parse(tc.arguments) : {};
     } catch {
       addMessage("system-note", `Model produced malformed arguments for ${tc.name}, skipped.`);
-      return;
+      return false;
     }
-    if (tc.name !== "ask_question" && tc.name !== "propose_plan") return;
+    if (tc.name !== "ask_question" && tc.name !== "propose_plan") return false;
 
     const sanitized = sanitizePlanToolCall({ name: tc.name, arguments: args });
     if (!sanitized.ok) {
       addMessage("system-note", `Model produced an invalid ${tc.name} call: ${sanitized.reason}`);
-      return;
+      return false;
     }
 
     if (sanitized.name === "ask_question") {
@@ -193,6 +194,7 @@ export default function ChatPanel({
       }
       addMessage("plan", summary ?? "", { plan: { approved: false, summary, nodes, edges } });
     }
+    return true;
   }
 
   /** Builds an approved plan directly from its structure — no LLM round-trip to reinterpret prose. */
@@ -286,13 +288,19 @@ export default function ChatPanel({
     const toolCalls = new Map<number, StreamingToolCall>();
     let lastIndex = -1;
     const createdThisTurn = new Set<string>();
+    // Some models occasionally emit ask_question or propose_plan more than
+    // once in the same turn (duplicate parallel tool calls) — only the
+    // first should ever reach the UI, or the user sees the same question/
+    // plan rendered twice.
+    let planToolCalledThisTurn = false;
 
     async function handleCompletedToolCall(tc: StreamingToolCall) {
       if (effectiveMode === "build") {
         if (!excalidrawApi) return;
         await runBuildToolCall(excalidrawApi, tc, createdThisTurn);
       } else {
-        runPlanToolCall(tc);
+        if (planToolCalledThisTurn) return;
+        if (runPlanToolCall(tc)) planToolCalledThisTurn = true;
       }
     }
 
