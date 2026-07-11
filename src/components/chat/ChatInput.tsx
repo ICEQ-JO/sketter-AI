@@ -1,6 +1,9 @@
 "use client";
 
+import { useLayoutEffect, useRef } from "react";
 import type { ChatMode } from "@/lib/chat/mode";
+
+const MAX_TEXTAREA_HEIGHT_PX = 200;
 
 interface ChatInputProps {
   value: string;
@@ -23,6 +26,18 @@ export default function ChatInput({
   placeholder = "Describe or edit the diagram…",
   rows = 2,
 }: ChatInputProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // rows/resize-none give a fixed-height box that silently clips anything
+  // past a couple of lines — grow with the content instead, up to a cap,
+  // then let the textarea's own scrollbar take over.
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT_PX)}px`;
+  }, [value]);
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!value.trim() || isStreaming) return;
@@ -53,6 +68,7 @@ export default function ChatInput({
       </div>
 
       <textarea
+        ref={textareaRef}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
@@ -64,7 +80,8 @@ export default function ChatInput({
         placeholder={placeholder}
         rows={rows}
         disabled={isStreaming}
-        className="w-full resize-none bg-transparent text-sm text-foreground outline-none placeholder:text-dim disabled:opacity-50"
+        style={{ maxHeight: MAX_TEXTAREA_HEIGHT_PX }}
+        className="w-full resize-none overflow-y-auto bg-transparent text-sm text-foreground outline-none placeholder:text-dim disabled:opacity-50"
       />
       <div className="mt-2 flex items-center justify-end">
         <button
