@@ -10,7 +10,13 @@ import type { ToolName } from "@/lib/tools/schema";
 import { sanitizePlanToolCall } from "@/lib/tools/sanitize";
 import { getProvider, DEFAULT_PROVIDER_ID } from "@/lib/providers/registry";
 import { DEFAULT_MODE, MODE_STORAGE_KEY, type ChatMode } from "@/lib/chat/mode";
-import { formatDrawingName, listDrawings, pendingDrawingNameKey } from "@/lib/storage/drawings";
+import {
+  formatDrawingName,
+  listDrawings,
+  loadMessages,
+  pendingDrawingNameKey,
+  saveMessages,
+} from "@/lib/storage/drawings";
 import type { SavedDrawing } from "@/lib/storage/drawings";
 import type { ChatMessage, PlanData } from "@/components/chat/types";
 import MessageBubble from "@/components/chat/MessageBubble";
@@ -80,6 +86,16 @@ export default function ChatPanel({
       void listDrawings().then(setDrawings);
     }
   }, [saveStatus]);
+
+  useEffect(() => {
+    void loadMessages(currentDrawingId).then((saved) => {
+      if (saved.length > 0) setMessages(saved as ChatMessage[]);
+    });
+  }, [currentDrawingId]);
+
+  useEffect(() => {
+    void saveMessages(currentDrawingId, messages);
+  }, [currentDrawingId, messages]);
 
   useEffect(() => {
     localStorage.setItem("sketter.providerId", providerId);

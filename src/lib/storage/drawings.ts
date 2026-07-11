@@ -115,6 +115,15 @@ export async function renameDrawing(id: string, name: string): Promise<void> {
 
 export async function deleteDrawing(id: string): Promise<void> {
   await del(id, drawingsStore);
+  await del(`messages-${id}`, drawingsStore);
+}
+
+export async function saveMessages(id: string, messages: unknown[]): Promise<void> {
+  await set(`messages-${id}`, messages, drawingsStore);
+}
+
+export async function loadMessages(id: string): Promise<unknown[]> {
+  return (await get<unknown[]>(`messages-${id}`, drawingsStore)) ?? [];
 }
 
 export async function clearAllDrawings(): Promise<void> {
