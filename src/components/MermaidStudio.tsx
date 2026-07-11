@@ -41,6 +41,39 @@ async function parseMermaidQuietly(
   }
 }
 
+/**
+ * Fully detaches every converted element from every other one: clears
+ * groupIds (so subgraph clusters aren't one grouped unit), arrow
+ * start/end bindings to shapes, container -> bound-text/arrow links, and
+ * text -> container links — every rectangle, arrow, and text label ends
+ * up independently selectable and editable. Also defensively renormalizes
+ * arrow points (points[0] must be [0,0] per Excalidraw's invariant) since
+ * mermaid-to-excalidraw doesn't reliably guarantee that for every edge
+ * geometry, which otherwise trips a "Linear element is not normalized"
+ * error the moment the arrow is selected or edited.
+ */
+function detachElements(
+  elements: readonly Record<string, unknown>[],
+): Record<string, unknown>[] {
+  return elements.map((element) => {
+    const el: Record<string, unknown> = { ...element, groupIds: [] };
+    if (el.type === "arrow" || el.type === "line") {
+      el.startBinding = null;
+      el.endBinding = null;
+      const points = el.points as [number, number][];
+      const [dx, dy] = points[0] ?? [0, 0];
+      if (dx !== 0 || dy !== 0) {
+        el.points = points.map(([x, y]) => [x - dx, y - dy]);
+        el.x = (el.x as number) + dx;
+        el.y = (el.y as number) + dy;
+      }
+    }
+    if (el.boundElements) el.boundElements = null;
+    if (el.type === "text" && el.containerId) el.containerId = null;
+    return el;
+  });
+}
+
 export default function MermaidStudio() {
   const router = useRouter();
   const [source, setSource] = useState(EXAMPLE);
@@ -72,9 +105,10 @@ export default function MermaidStudio() {
         // store that persists across calls, so re-parsing on every keystroke with
         // stable mermaid-derived ids trips its "duplicate id" guard and corrupts
         // arrows. Minting fresh ids each parse avoids that entirely.
-        const converted = convertToExcalidrawElements(elements, { regenerateIds: true }).map(
-          (el) => ({ ...el, groupIds: [] }),
-        );
+        const raw = convertToExcalidrawElements(elements, { regenerateIds: true });
+        const converted = detachElements(
+          raw as unknown as Record<string, unknown>[],
+        ) as unknown as typeof raw;
         excalidrawApi.updateScene({ elements: converted });
         if (files) {
           const fileList = Object.values(files);
