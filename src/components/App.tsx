@@ -95,11 +95,11 @@ export default function App() {
     autosaveTimerRef.current = setTimeout(async () => {
       try {
         const existing = await loadDrawing(currentDrawingId);
-        const pendingName = localStorage.getItem(pendingDrawingNameKey(currentDrawingId));
-        await saveDrawing(api, {
-          id: currentDrawingId,
-          name: existing?.name ?? pendingName ?? "new chat",
-        });
+        const pendingNameKey = pendingDrawingNameKey(currentDrawingId);
+        const pendingName = localStorage.getItem(pendingNameKey);
+        const name = pendingName || existing?.name || "new chat";
+        await saveDrawing(api, { id: currentDrawingId, name });
+        localStorage.removeItem(pendingNameKey);
         setSaveStatus("saved");
       } catch {
         setSaveStatus("idle");

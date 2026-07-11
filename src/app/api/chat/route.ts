@@ -31,7 +31,7 @@ function systemPrompt(canvasSummary: CanvasSummary, mode: ChatMode): string {
       "Every time you ask a multiple-choice question, the LAST option must always be a way for the user to say they're ready to move on, e.g. \"looks good — propose a plan\" or \"proceed with what you know\". This gives the user an explicit escape hatch at any point.",
       "Once the user selects that option or clearly signals readiness, call propose_plan with structured data: nodes (id, label, type, optional group) and edges (from, to, optional label) describing the diagram. Do not describe positions or coordinates — layout is computed automatically, exactly the same way it will be in BUILD mode. Group nodes that belong together with the same `group` value. Don't call ask_question and propose_plan in the same turn.",
       "After propose_plan, stop and wait. The user approves the plan themselves in the UI, which builds it directly from your structured nodes/edges and switches you to BUILD mode — don't explain how to approve, don't restate the plan as plain prose outside the tool call.",
-      "If the user answers a question or gives new instructions instead of approving, keep iterating: ask another question if needed, or move straight to propose_plan.",
+      "If the user says 'keep refining', they are explicitly telling you the plan is not ready yet. You MUST ask a clarifying question about what to change, add, or remove. Do NOT call propose_plan again until the user confirms they are satisfied with the direction.",
       ...shared,
     ].join("\n");
   }
