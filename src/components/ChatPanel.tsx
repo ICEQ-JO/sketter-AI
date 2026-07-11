@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { SceneStore } from "@/lib/canvas/sceneStore";
-import { buildCanvasSummary } from "@/lib/canvas/summary";
+import { buildCanvasSummary, type CanvasSummary } from "@/lib/canvas/summary";
 import { verifyAndFix } from "@/lib/canvas/verify";
-import { executeToolCall } from "@/lib/tools/executor";
+import { executeToolCall, type ExecutionResult } from "@/lib/tools/executor";
 import type { ToolName } from "@/lib/tools/schema";
 import { sanitizePlanToolCall } from "@/lib/tools/sanitize";
 import { getProvider, DEFAULT_PROVIDER_ID } from "@/lib/providers/registry";
@@ -33,8 +33,28 @@ interface StreamingToolCall {
   executed: boolean;
 }
 
-/** Max corrective round-trips after a build turn if verification finds unresolved issues. */
-const MAX_VERIFY_RETRIES = 2;
+/** OpenAI-style message the client sends to `/api/chat`, mirroring the server's
+ *  ApiMessage — assistant turns carry `tool_calls`, `tool` messages carry results. */
+interface ApiMessage {
+  role: "user" | "assistant" | "tool";
+  content: string;
+  tool_calls?: {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+  tool_call_id?: string;
+}
+
+/** Max model round-trips in a single build request. Each step lets the model
+ *  see the results of its previous tool calls (successes, rejections, and any
+ *  geometry issues) and decide whether to continue, correct, or stop. */
+const MAX_AGENT_STEPS = 6;
+
+/** Stable id for a streamed tool call — some models omit ids in streaming deltas. */
+function toolCallId(tc: StreamingToolCall, step: number): string {
+  return tc.id || `call_${step}_${tc.index}`;
+}
 
 interface ChatPanelProps {
   excalidrawApi: ExcalidrawImperativeAPI | null;
@@ -127,13 +147,13 @@ export default function ChatPanel({
     return id;
   }
 
-  /** Applies a single already-parsed build tool call — shared by streamed calls and the direct plan-approval path. */
+  /** Applies a single already-parsed build tool call — shared by streamed calls and the direct plan-approval path. Returns the execution result so the agentic loop can report it back to the model. */
   async function runBuildTool(
     api: ExcalidrawImperativeAPI,
     name: string,
     args: Record<string, unknown>,
     createdThisTurn: Set<string>,
-  ) {
+  ): Promise<ExecutionResult> {
     const activityId = addMessage(
       "tool-activity",
       `${name}(${Object.entries(args).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(", ")})`,
@@ -142,26 +162,27 @@ export default function ChatPanel({
     if (!result.ok) {
       setMessages((prev) => prev.filter((m) => m.id !== activityId));
       addMessage("system-note", `Skipped ${name}: ${result.reason}`);
-      return;
+      return result;
     }
     if ((name === "add_node" || name === "add_freeform") && typeof args.id === "string") {
       createdThisTurn.add(args.id);
     }
+    return result;
   }
 
   async function runBuildToolCall(
     api: ExcalidrawImperativeAPI,
     tc: StreamingToolCall,
     createdThisTurn: Set<string>,
-  ) {
+  ): Promise<ExecutionResult> {
     let args: Record<string, unknown> = {};
     try {
       args = tc.arguments ? JSON.parse(tc.arguments) : {};
     } catch {
       addMessage("system-note", `Model produced malformed arguments for ${tc.name}, skipped.`);
-      return;
+      return { name: tc.name as ToolName, ok: false, reason: "malformed arguments (invalid JSON)" };
     }
-    await runBuildTool(api, tc.name, args, createdThisTurn);
+    return runBuildTool(api, tc.name, args, createdThisTurn);
   }
 
   /** Returns true if it actually rendered a question/plan message, so callers can tell a real render apart from a skipped/malformed call. */
@@ -248,8 +269,213 @@ export default function ChatPanel({
     void sendMessage("keep refining", "plan");
   }
 
-  async function sendMessage(userText: string, modeOverride?: ChatMode, retryDepth = 0) {
-    if (!userText.trim() || (isStreaming && retryDepth === 0)) return;
+  /**
+   * Streams a single model turn: sends the running message array + current
+   * canvas summary, renders assistant text live, and executes each tool call
+   * the moment its arguments finish streaming (via `onToolComplete`, so drawing
+   * stays incremental). Returns the turn's assistant text, the completed tool
+   * calls, and the finish reason — the caller decides whether to loop again.
+   */
+  async function streamTurn(
+    apiMessages: ApiMessage[],
+    canvasSummary: CanvasSummary,
+    effectiveMode: ChatMode,
+    onToolComplete: (tc: StreamingToolCall) => Promise<void>,
+  ): Promise<{ assistantText: string; toolCalls: StreamingToolCall[]; finishReason: string | null } | null> {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey, model, messages: apiMessages, canvasSummary, mode: effectiveMode }),
+    });
+
+    if (!res.ok || !res.body) {
+      const errBody = await res.json().catch(() => ({ error: res.statusText }));
+      addMessage("system-note", `Error: ${errBody.error ?? res.statusText}`);
+      return null;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let assistantText = "";
+    let finishReason: string | null = null;
+    const toolCalls = new Map<number, StreamingToolCall>();
+    let lastIndex = -1;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const events = buffer.split("\n\n");
+      buffer = events.pop() ?? "";
+
+      for (const evt of events) {
+        const line = evt.trim();
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") continue;
+
+        let json: {
+          choices?: {
+            delta?: {
+              content?: string;
+              tool_calls?: {
+                index: number;
+                id?: string;
+                function?: { name?: string; arguments?: string };
+              }[];
+            };
+            finish_reason?: string | null;
+          }[];
+        };
+        try {
+          json = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+
+        if (json.choices?.[0]?.finish_reason) {
+          finishReason = json.choices[0].finish_reason ?? null;
+        }
+
+        const delta = json.choices?.[0]?.delta;
+        if (delta?.content) {
+          assistantText += delta.content;
+          setMessages((prev) => {
+            const withoutStreaming = prev.filter((m) => m.id !== "streaming-assistant");
+            return [
+              ...withoutStreaming,
+              { id: "streaming-assistant", role: "assistant", content: assistantText },
+            ];
+          });
+        }
+
+        for (const tcDelta of delta?.tool_calls ?? []) {
+          if (tcDelta.index !== lastIndex && toolCalls.has(lastIndex)) {
+            const prevCall = toolCalls.get(lastIndex)!;
+            if (!prevCall.executed) {
+              prevCall.executed = true;
+              await onToolComplete(prevCall);
+            }
+          }
+          lastIndex = tcDelta.index;
+
+          const existing = toolCalls.get(tcDelta.index);
+          if (existing) {
+            existing.arguments += tcDelta.function?.arguments ?? "";
+          } else {
+            toolCalls.set(tcDelta.index, {
+              index: tcDelta.index,
+              id: tcDelta.id ?? "",
+              name: tcDelta.function?.name ?? "",
+              arguments: tcDelta.function?.arguments ?? "",
+              executed: false,
+            });
+          }
+        }
+      }
+    }
+
+    for (const tc of toolCalls.values()) {
+      if (!tc.executed) {
+        tc.executed = true;
+        await onToolComplete(tc);
+      }
+    }
+
+    // Promote the live-streaming bubble into a permanent message for this turn.
+    setMessages((prev) =>
+      prev.map((m) => (m.id === "streaming-assistant" ? { ...m, id: crypto.randomUUID() } : m)),
+    );
+
+    return {
+      assistantText,
+      toolCalls: [...toolCalls.values()].sort((a, b) => a.index - b.index),
+      finishReason,
+    };
+  }
+
+  /**
+   * Agentic build loop: the model draws, then sees the concrete outcome of its
+   * tool calls — which succeeded, which were rejected, and any geometry issues
+   * the verifier couldn't auto-fix — and keeps going until it's satisfied or the
+   * step budget is spent. This is what makes it an agent rather than a one-shot
+   * text-to-tool translator.
+   */
+  async function runBuildLoop(api: ExcalidrawImperativeAPI, history: ApiMessage[]) {
+    const apiMessages = [...history];
+
+    for (let step = 0; step < MAX_AGENT_STEPS; step++) {
+      const canvasSummary = buildCanvasSummary(api.getSceneElements());
+      const stepCreated = new Set<string>();
+      const results = new Map<StreamingToolCall, ExecutionResult>();
+
+      const turn = await streamTurn(apiMessages, canvasSummary, "build", async (tc) => {
+        results.set(tc, await runBuildToolCall(api, tc, stepCreated));
+      });
+      if (!turn) return;
+
+      // No tool calls means the model chose to just talk — it's done.
+      if (turn.toolCalls.length === 0) return;
+
+      // Lay out this step's new nodes, then verify the resulting geometry.
+      sceneStore.runAutoLayout(api, canvasSummary);
+      let verifyNote = "";
+      if (stepCreated.size > 0) {
+        const verifyResult = verifyAndFix(api, sceneStore, stepCreated);
+        if (verifyResult.fixedCount > 0) {
+          addMessage("tool-activity", `auto-adjusted ${verifyResult.fixedCount} geometry issue(s)`);
+        }
+        const unresolved = verifyResult.issues.filter((i) => !i.autoFixed);
+        if (unresolved.length > 0) {
+          verifyNote = ["Geometry issues remain after auto-layout:", ...unresolved.map((i) => `- ${i.detail}`)].join("\n");
+        }
+      }
+
+      // Feed the model its own assistant turn plus a result for every tool call,
+      // so the next round is grounded in what actually happened on the canvas.
+      apiMessages.push({
+        role: "assistant",
+        content: turn.assistantText,
+        tool_calls: turn.toolCalls.map((tc) => ({
+          id: toolCallId(tc, step),
+          type: "function",
+          function: { name: tc.name, arguments: tc.arguments || "{}" },
+        })),
+      });
+      for (const tc of turn.toolCalls) {
+        const result = results.get(tc);
+        apiMessages.push({
+          role: "tool",
+          tool_call_id: toolCallId(tc, step),
+          content: JSON.stringify(
+            result && !result.ok ? { ok: false, reason: result.reason } : { ok: true },
+          ),
+        });
+      }
+      if (verifyNote) {
+        apiMessages.push({
+          role: "user",
+          content: `${verifyNote}\nCall the tools needed to fix these, then stop. If everything looks correct, just say so without calling any tools.`,
+        });
+      } else {
+        // Nudge toward termination so a satisfied model doesn't keep drawing.
+        apiMessages.push({
+          role: "user",
+          content:
+            "Your tool calls were applied. If the diagram now fully satisfies the request, reply with a brief confirmation and DO NOT call any more tools. Only call tools if something still needs to be added or corrected.",
+        });
+      }
+
+      if (step === MAX_AGENT_STEPS - 1) {
+        addMessage("system-note", "Reached the step limit for this request — send another message to continue.");
+      }
+    }
+  }
+
+  async function sendMessage(userText: string, modeOverride?: ChatMode) {
+    if (!userText.trim() || isStreaming) return;
     if (!excalidrawApi) return;
 
     if (!apiKey) {
@@ -271,7 +497,7 @@ export default function ChatPanel({
       );
     }
 
-    const history = [...messages, { id: "tmp", role: "user" as const, content: userText }]
+    const history: ApiMessage[] = [...messages, { id: "tmp", role: "user" as const, content: userText }]
       .filter(
         (m) =>
           m.role === "user" || m.role === "assistant" || m.role === "question" || m.role === "plan",
@@ -281,158 +507,21 @@ export default function ChatPanel({
         content: m.content,
       }));
 
-    const canvasSummary = buildCanvasSummary(excalidrawApi.getSceneElements());
-
     setIsStreaming(true);
-    let assistantText = "";
-    const toolCalls = new Map<number, StreamingToolCall>();
-    let lastIndex = -1;
-    const createdThisTurn = new Set<string>();
-    // Some models occasionally emit ask_question or propose_plan more than
-    // once in the same turn (duplicate parallel tool calls) — only the
-    // first should ever reach the UI, or the user sees the same question/
-    // plan rendered twice.
-    let planToolCalledThisTurn = false;
-
-    async function handleCompletedToolCall(tc: StreamingToolCall) {
-      if (effectiveMode === "build") {
-        if (!excalidrawApi) return;
-        await runBuildToolCall(excalidrawApi, tc, createdThisTurn);
-      } else {
-        if (planToolCalledThisTurn) return;
-        if (runPlanToolCall(tc)) planToolCalledThisTurn = true;
-      }
-    }
-
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey, model, messages: history, canvasSummary, mode: effectiveMode }),
-      });
-
-      if (!res.ok || !res.body) {
-        const errBody = await res.json().catch(() => ({ error: res.statusText }));
-        addMessage("system-note", `Error: ${errBody.error ?? res.statusText}`);
-        setIsStreaming(false);
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const events = buffer.split("\n\n");
-        buffer = events.pop() ?? "";
-
-        for (const evt of events) {
-          const line = evt.trim();
-          if (!line.startsWith("data:")) continue;
-          const payload = line.slice(5).trim();
-          if (payload === "[DONE]") continue;
-
-          let json: {
-            choices?: {
-              delta?: {
-                content?: string;
-                tool_calls?: {
-                  index: number;
-                  id?: string;
-                  function?: { name?: string; arguments?: string };
-                }[];
-              };
-              finish_reason?: string | null;
-            }[];
-          };
-          try {
-            json = JSON.parse(payload);
-          } catch {
-            continue;
-          }
-
-          const delta = json.choices?.[0]?.delta;
-          if (delta?.content) {
-            assistantText += delta.content;
-            setMessages((prev) => {
-              const withoutStreaming = prev.filter((m) => m.id !== "streaming-assistant");
-              return [
-                ...withoutStreaming,
-                { id: "streaming-assistant", role: "assistant", content: assistantText },
-              ];
-            });
-          }
-
-          for (const tcDelta of delta?.tool_calls ?? []) {
-            if (tcDelta.index !== lastIndex && toolCalls.has(lastIndex)) {
-              const prevCall = toolCalls.get(lastIndex)!;
-              if (!prevCall.executed) {
-                prevCall.executed = true;
-                await handleCompletedToolCall(prevCall);
-              }
-            }
-            lastIndex = tcDelta.index;
-
-            const existing = toolCalls.get(tcDelta.index);
-            if (existing) {
-              existing.arguments += tcDelta.function?.arguments ?? "";
-            } else {
-              toolCalls.set(tcDelta.index, {
-                index: tcDelta.index,
-                id: tcDelta.id ?? "",
-                name: tcDelta.function?.name ?? "",
-                arguments: tcDelta.function?.arguments ?? "",
-                executed: false,
-              });
-            }
-          }
-        }
-      }
-
-      for (const tc of toolCalls.values()) {
-        if (!tc.executed) {
-          tc.executed = true;
-          await handleCompletedToolCall(tc);
-        }
-      }
-
-      if (effectiveMode === "build" && excalidrawApi) {
-        // No-ops if nothing is pending layout — safe to call unconditionally.
-        sceneStore.runAutoLayout(excalidrawApi, canvasSummary);
-      }
-
-      setMessages((prev) =>
-        prev.map((m) => (m.id === "streaming-assistant" ? { ...m, id: crypto.randomUUID() } : m)),
-      );
-
-      if (effectiveMode === "build" && excalidrawApi && createdThisTurn.size > 0) {
-        const verifyResult = verifyAndFix(excalidrawApi, sceneStore, createdThisTurn);
-        const unresolved = verifyResult.issues.filter((i) => !i.autoFixed);
-        if (verifyResult.fixedCount > 0) {
-          addMessage(
-            "tool-activity",
-            `auto-adjusted ${verifyResult.fixedCount} geometry issue(s)`,
-          );
-        }
-        if (unresolved.length > 0) {
-          if (retryDepth < MAX_VERIFY_RETRIES) {
-            const correctiveText = [
-              "The diagram has issues you should fix:",
-              ...unresolved.map((i) => `- ${i.detail}`),
-              "Call the appropriate tools to correct these, then stop.",
-            ].join("\n");
-            await sendMessage(correctiveText, "build", retryDepth + 1);
-          } else {
-            addMessage(
-              "system-note",
-              `Diagram has ${unresolved.length} unresolved issue(s) after automatic correction attempts — you may want to describe what to fix.`,
-            );
-          }
-        }
+      if (effectiveMode === "build") {
+        await runBuildLoop(excalidrawApi, history);
+      } else {
+        // Plan mode is a single shot: the model asks one question or proposes a
+        // plan for the user to approve — there are no canvas results to feed back.
+        // Some models emit ask_question/propose_plan more than once per turn;
+        // only the first should reach the UI.
+        let planToolCalledThisTurn = false;
+        const canvasSummary = buildCanvasSummary(excalidrawApi.getSceneElements());
+        await streamTurn(history, canvasSummary, "plan", async (tc) => {
+          if (planToolCalledThisTurn) return;
+          if (runPlanToolCall(tc)) planToolCalledThisTurn = true;
+        });
       }
     } catch (err) {
       addMessage("system-note", `Request failed: ${(err as Error).message}`);

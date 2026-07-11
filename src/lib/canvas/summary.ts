@@ -39,6 +39,8 @@ export interface CanvasSummary {
   clusters: ClusterSummary[];
   /** An empty region recommended for new, unrelated content. */
   suggestedFreeRegion: BoundingBox;
+  /** One-line natural-language read of the layout, so the model orients before placing. */
+  spatialNote: string;
 }
 
 const DEFAULT_FREE_REGION: BoundingBox = { x: 0, y: 0, width: 800, height: 600 };
@@ -117,6 +119,42 @@ function computeSuggestedFreeRegion(extent: BoundingBox | null): BoundingBox {
   };
 }
 
+/** A short, plain-language description of the scene so the model can orient
+ *  itself before placing content, instead of parsing raw coordinates. */
+function computeSpatialNote(
+  elements: CanvasSummaryElement[],
+  clusters: ClusterSummary[],
+  freeRegion: BoundingBox,
+): string {
+  if (elements.length === 0) {
+    return "Canvas is empty — build freely; automatic layout centers new content.";
+  }
+
+  const parts: string[] = [];
+  const clusterCount = clusters.length;
+  const looseCount = elements.length - clusters.reduce((n, c) => n + c.elementIds.length, 0);
+
+  if (clusterCount > 0) {
+    const labelled = clusters
+      .map((c) => c.labels[0])
+      .filter((l): l is string => !!l)
+      .slice(0, 4);
+    parts.push(
+      `${clusterCount} connected ${clusterCount === 1 ? "cluster" : "clusters"}` +
+        (labelled.length ? ` (e.g. ${labelled.join(", ")})` : ""),
+    );
+  }
+  if (looseCount > 0) {
+    parts.push(`${looseCount} unconnected element${looseCount === 1 ? "" : "s"}`);
+  }
+
+  const where =
+    `Open space for new, unrelated content is to the right, around ` +
+    `(${Math.round(freeRegion.x)}, ${Math.round(freeRegion.y)}).`;
+
+  return `${parts.join(" and ")} on the canvas. ${where} Reuse existing elements before adding duplicates.`;
+}
+
 /**
  * Compact scene summary sent to the model each turn instead of raw
  * Excalidraw JSON — strips stroke widths, roughness seeds, version numbers,
@@ -176,12 +214,15 @@ export function buildCanvasSummary(elements: readonly ExcalidrawElement[]): Canv
   }
 
   const extent = computeExtent(summaryElements);
+  const clusters = computeClusters(summaryElements, connections);
+  const suggestedFreeRegion = computeSuggestedFreeRegion(extent);
 
   return {
     elements: summaryElements,
     connections,
     extent,
-    clusters: computeClusters(summaryElements, connections),
-    suggestedFreeRegion: computeSuggestedFreeRegion(extent),
+    clusters,
+    suggestedFreeRegion,
+    spatialNote: computeSpatialNote(summaryElements, clusters, suggestedFreeRegion),
   };
 }
