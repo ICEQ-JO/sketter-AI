@@ -91,13 +91,18 @@ export const TOOL_SCHEMA = [
     type: "function",
     function: {
       name: "update_element",
-      description: "Change properties of an existing element.",
+      description: "Change properties of an existing element, including its shape type.",
       parameters: {
         type: "object",
         properties: {
           id: { type: "string" },
           x: { type: "number" },
           y: { type: "number" },
+          type: {
+            type: "string",
+            enum: ["rectangle", "ellipse", "diamond", "text"],
+            description: "Change the element's shape, e.g. turn a rectangle into a circle/ellipse.",
+          },
           text: { type: "string" },
           strokeColor: { type: "string" },
           backgroundColor: { type: "string" },

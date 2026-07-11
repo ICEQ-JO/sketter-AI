@@ -279,10 +279,11 @@ export class SceneStore {
   }
 
   updateElement(api: ExcalidrawImperativeAPI, args: Record<string, unknown>) {
-    const { id, x, y, text, strokeColor, backgroundColor } = args as {
+    const { id, x, y, type, text, strokeColor, backgroundColor } = args as {
       id: string;
       x?: number;
       y?: number;
+      type?: string;
       text?: string;
       strokeColor?: string;
       backgroundColor?: string;
@@ -293,6 +294,28 @@ export class SceneStore {
     if (y !== undefined) existing.y = y;
     if (strokeColor) existing.strokeColor = strokeColor;
     if (backgroundColor) existing.backgroundColor = backgroundColor;
+
+    if (type && type !== existing.type) {
+      const wasText = existing.type === "text";
+      const willBeText = type === "text";
+      if (willBeText && !wasText) {
+        // Shape -> text: fold the bound label (if any) into a top-level text field.
+        const label = existing.label as { text?: string } | undefined;
+        existing.text = label?.text ?? "";
+        delete existing.label;
+        delete existing.width;
+        delete existing.height;
+      } else if (!willBeText && wasText) {
+        // Text -> shape: the other direction — move top-level text into a bound label.
+        const existingText = typeof existing.text === "string" ? existing.text : "";
+        if (existingText) existing.label = { text: existingText };
+        delete existing.text;
+        if (existing.width === undefined) existing.width = 120;
+        if (existing.height === undefined) existing.height = 80;
+      }
+      existing.type = type;
+    }
+
     if (text) {
       if (existing.type === "text") {
         existing.text = text;
